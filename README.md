@@ -123,7 +123,7 @@ cd app && node scripts/build-sprites.mjs ../companion-ivory-animations /tmp/prev
 npx tauri icon src-tauri/icons/source.png -o src-tauri/icons
 ```
 
-To publish a release: bump the version in `Cargo.toml`, `Cargo.lock`, `app/package.json`, `app/package-lock.json`, `app/src-tauri/tauri.conf.json`, `plugin/.claude-plugin/plugin.json`, `plugin/.codex-plugin/plugin.json` and `.claude-plugin/marketplace.json`, then create and push the version tag (for example `git tag v0.1.1 && git push personal v0.1.1`). The `release` workflow builds an ad hoc signed universal bundle, only in the `Magno95/flow-keeper` repository. Alternatively, `--from-source` builds locally.
+To publish a release: bump the version in `Cargo.toml`, `Cargo.lock`, `app/package.json`, `app/package-lock.json`, `app/src-tauri/tauri.conf.json`, `plugin/.claude-plugin/plugin.json`, `plugin/.codex-plugin/plugin.json` and `.claude-plugin/marketplace.json`, then push a `vX.Y.Z` tag for that public commit to `Magno95/flow-keeper`. The `release` workflow builds an ad hoc signed universal bundle, only in the `Magno95/flow-keeper` repository. Alternatively, `--from-source` builds locally.
 
 ## Privacy
 
