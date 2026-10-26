@@ -6,7 +6,11 @@
   import Menu, { type MenuItem } from "./Menu.svelte";
   import StatusPill from "./StatusPill.svelte";
 
-  let { card, projectName = null }: { card: ConversationCard; projectName?: string | null } = $props();
+  let {
+    card,
+    projectName = null,
+    highlight,
+  }: { card: ConversationCard; projectName?: string | null; highlight?: boolean } = $props();
   let expanded = $state(false);
 
   const placeholder = $derived.by(() => {
@@ -57,7 +61,7 @@
   );
 </script>
 
-<article class="card {card.state}" aria-label={card.title}>
+<article class="card {card.state}" class:unread={highlight ?? card.unread} aria-label={card.title}>
   <header>
     <StatusPill state={card.state} label={card.stateLabel} />
     <time datetime={new Date(card.lastActivityAt).toISOString()} title={dateTime(card.lastActivityAt)}>
@@ -130,6 +134,9 @@
     flex-direction: column;
     gap: 6px;
     transition: opacity 160ms ease;
+  }
+  .card.unread {
+    box-shadow: 0 0 0 2px var(--finished), var(--shadow-card);
   }
   .card.closed {
     background: color-mix(in srgb, var(--surface) 60%, var(--bg));

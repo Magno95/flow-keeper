@@ -128,6 +128,8 @@ pub struct ConversationCard {
     pub hidden: bool,
     /// Waiting for you, but the user has already seen the request: left out of “Waiting for you” and the badge.
     pub attention_seen: bool,
+    /// The turn finished and the user hasn't looked at it yet.
+    pub unread: bool,
     pub can_focus: bool,
     pub can_resume: bool,
 }
@@ -141,6 +143,7 @@ pub struct Counts {
     pub working: usize,
     pub waiting: usize,
     pub finished: usize,
+    pub unread: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,7 +186,7 @@ SELECT c.id, c.project_id, c.user_title, c.title, c.provisional_title, c.summary
        CASE WHEN c.recap_status = 'pending' AND c.recap_due_at IS NULL THEN 'waiting' ELSE c.recap_status END,
        c.summary_at,
        c.state, c.state_detail, c.last_activity_at, c.hidden, c.worktree_root, c.cwd, c.tool,
-       i.env_app, i.env_guess, i.ended_at, i.pid, i.tty, i.bundle_id, c.attention_seen
+       i.env_app, i.env_guess, i.ended_at, i.pid, i.tty, i.bundle_id, c.attention_seen, c.unread
 FROM conversations c
 LEFT JOIN instances i ON i.id = c.current_instance_id
 ";
@@ -210,6 +213,7 @@ fn read_card(r: &Row, now: i64) -> rusqlite::Result<RawCard> {
     let tty: Option<String> = r.get(19)?;
     let bundle_id: Option<String> = r.get(20)?;
     let attention_seen: bool = r.get(21)?;
+    let unread: bool = r.get(22)?;
 
     let display = display_state(&op_state, last_activity_at, now);
     let (title, title_is_provisional) = match (user_title, title, provisional) {
@@ -245,6 +249,8 @@ fn read_card(r: &Row, now: i64) -> rusqlite::Result<RawCard> {
             last_activity_at,
             hidden: r.get(11)?,
             attention_seen: attention_seen && display == DisplayState::Waiting,
+            // It outlives Finished: after a while it becomes Idle but stays unread.
+            unread: unread && matches!(display, DisplayState::Finished | DisplayState::Idle),
             can_focus: live && (tty.is_some() || bundle_id.is_some()),
             can_resume: !live && cwd.is_some(),
         },
@@ -288,16 +294,17 @@ fn label_worktrees(cards: &mut [RawCard]) {
     }
 }
 
-/// Order on open: waiting first, then working, then by activity.
+/// Order on open: waiting first, then unread results, working, then by activity.
 fn sort_cards(cards: &mut [ConversationCard]) {
     cards.sort_by_key(|c| {
         let rank = match c.state {
             DisplayState::Waiting => 0,
-            DisplayState::Working => 1,
-            DisplayState::Finished => 2,
-            DisplayState::Unknown => 3,
-            DisplayState::Idle => 4,
-            DisplayState::Closed => 5,
+            _ if c.unread => 1,
+            DisplayState::Working => 2,
+            DisplayState::Finished => 3,
+            DisplayState::Unknown => 4,
+            DisplayState::Idle => 5,
+            DisplayState::Closed => 6,
         };
         (rank, -c.last_activity_at)
     });
@@ -316,6 +323,9 @@ fn count(cards: &[&ConversationCard]) -> Counts {
             DisplayState::Waiting if !c.attention_seen => n.waiting += 1,
             DisplayState::Finished => n.finished += 1,
             _ => {}
+        }
+        if c.unread {
+            n.unread += 1;
         }
     }
     n
@@ -360,7 +370,15 @@ pub fn overview(conn: &Connection, now: i64) -> Result<Overview> {
         });
     }
     projects.sort_by_key(|p| {
-        let rank = if p.counts.waiting > 0 { 0 } else if p.counts.working > 0 { 1 } else { 2 };
+        let rank = if p.counts.waiting > 0 {
+            0
+        } else if p.counts.unread > 0 {
+            1
+        } else if p.counts.working > 0 {
+            2
+        } else {
+            3
+        };
         // Same state: Unassigned goes last.
         (rank, p.id.is_none(), -p.last_activity_at)
     });

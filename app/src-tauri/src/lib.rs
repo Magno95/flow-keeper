@@ -136,6 +136,7 @@ pub fn run() {
             commands::hide_conversation,
             commands::unhide_conversation,
             commands::dismiss_attention,
+            commands::mark_project_read,
             commands::rename_conversation,
             commands::move_conversation,
             commands::request_recap,

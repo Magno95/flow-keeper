@@ -43,6 +43,7 @@ export const api = {
   hide: (id: number) => invoke<void>("hide_conversation", { id }),
   unhide: (id: number) => invoke<void>("unhide_conversation", { id }),
   dismissAttention: (id: number) => invoke<void>("dismiss_attention", { id }),
+  markProjectRead: (id: number | null) => invoke<void>("mark_project_read", { id }),
   rename: (id: number, title: string | null) => invoke<void>("rename_conversation", { id, title }),
   move: (req: { id: number; projectId: number | null; newProjectName: string | null; associateFolder: boolean }) =>
     invoke<number | null>("move_conversation", { req }),

@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS conversations(
   hidden_at INTEGER,
   -- Attention request already seen: reset on every state change.
   attention_seen INTEGER NOT NULL DEFAULT 0,
+  -- Finished turn not looked at yet: cleared on opening it or its project,
+  -- and on every state change.
+  unread INTEGER NOT NULL DEFAULT 0,
   current_instance_id INTEGER,
   UNIQUE(tool, namespace, native_id)
 );
@@ -170,13 +173,15 @@ fn configure(conn: &Connection) -> Result<()> {
 /// Columns added after the first version: `CREATE TABLE IF NOT EXISTS` does
 /// not add them to existing databases.
 fn migrate(conn: &Connection) -> Result<()> {
-    let has_seen: bool = conn.query_row(
-        "SELECT count(*) > 0 FROM pragma_table_info('conversations') WHERE name = 'attention_seen'",
-        [],
-        |r| r.get(0),
-    )?;
-    if !has_seen {
-        conn.execute_batch("ALTER TABLE conversations ADD COLUMN attention_seen INTEGER NOT NULL DEFAULT 0")?;
+    for column in ["attention_seen", "unread"] {
+        let present: bool = conn.query_row(
+            "SELECT count(*) > 0 FROM pragma_table_info('conversations') WHERE name = ?1",
+            [column],
+            |r| r.get(0),
+        )?;
+        if !present {
+            conn.execute_batch(&format!("ALTER TABLE conversations ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"))?;
+        }
     }
     Ok(())
 }
@@ -250,6 +255,8 @@ mod tests {
         configure(&conn).unwrap();
         let seen: bool = conn.query_row("SELECT attention_seen FROM conversations WHERE id = 1", [], |r| r.get(0)).unwrap();
         assert!(!seen);
+        let unread: bool = conn.query_row("SELECT unread FROM conversations WHERE id = 1", [], |r| r.get(0)).unwrap();
+        assert!(!unread);
         let version: String = conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
         assert_eq!(version, SCHEMA_VERSION.to_string());
     }

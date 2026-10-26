@@ -20,6 +20,8 @@ export interface ConversationCard {
   lastActivityAt: number;
   hidden: boolean;
   attentionSeen: boolean;
+  /** The turn finished and you haven't looked at it yet. */
+  unread: boolean;
   canFocus: boolean;
   canResume: boolean;
 }
@@ -31,6 +33,7 @@ export interface Counts {
   working: number;
   waiting: number;
   finished: number;
+  unread: number;
 }
 
 export interface ProjectCard {

@@ -8,7 +8,12 @@
   const initial = $derived(project.id === null ? "?" : project.name.trim().charAt(0).toUpperCase());
 </script>
 
-<button class="card" onclick={onopen} aria-label={`${project.name}: ${countsSummary(project.counts)}`}>
+<button
+  class="card"
+  class:unread={project.counts.unread > 0}
+  onclick={onopen}
+  aria-label={`${project.name}: ${countsSummary(project.counts)}${project.counts.unread ? " · new results to read" : ""}`}
+>
   <span class="tile" style={`--h:${hue}`} aria-hidden="true">{initial}</span>
   <span class="text">
     <span class="name">{project.name}</span>
@@ -16,6 +21,7 @@
     <span class="status">
       {#if project.counts.waiting}<span class="dot waiting" aria-hidden="true"></span>{/if}
       {#if project.counts.working}<span class="dot working" aria-hidden="true"></span>{/if}
+      {#if project.counts.unread}<span class="dot finished" aria-hidden="true"></span>{/if}
       <span>{countsSummary(project.counts)}</span>
     </span>
     <span class="foot">{plural(project.counts.total, "conversation", "conversations")} · {ago(project.lastActivityAt)}</span>
@@ -41,6 +47,13 @@
   .card:hover {
     transform: translateY(-1px);
     box-shadow: var(--shadow-pop);
+  }
+  /* finished turns not read yet: until you open the project or work resumes */
+  .card.unread {
+    box-shadow: 0 0 0 2px var(--finished), var(--shadow-card);
+  }
+  .card.unread:hover {
+    box-shadow: 0 0 0 2px var(--finished), var(--shadow-pop);
   }
   .tile {
     width: 52px;
@@ -98,6 +111,9 @@
   }
   .dot.working {
     background: var(--working);
+  }
+  .dot.finished {
+    background: var(--finished);
   }
   .foot {
     font-size: 12px;

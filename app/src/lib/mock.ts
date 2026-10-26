@@ -28,6 +28,7 @@ function card(p: Partial<ConversationCard> & Pick<ConversationCard, "id" | "proj
     lastActivityAt: now - 3 * min,
     hidden: false,
     attentionSeen: false,
+    unread: false,
     canFocus: p.state !== "closed",
     canResume: p.state === "closed",
     ...p,
@@ -37,11 +38,11 @@ function card(p: Partial<ConversationCard> & Pick<ConversationCard, "id" | "proj
 const conversations: ConversationCard[] = [
   card({ id: 1, projectId: 1, title: "User sign-in", state: "working", summary: "Found the cause of the login error: the token expired before it was renewed. At the last update, tests were running.", environment: "iTerm", lastActivityAt: now - 1 * min }),
   card({ id: 2, projectId: 1, title: "Checkout with saved cards", state: "waiting", stateReason: "Asking for permission to run a command in the terminal", summary: "Added saving cards to the profile and updated the order summary.", folderLabel: "shop-checkout", lastActivityAt: now - 2 * min }),
-  card({ id: 3, projectId: 1, title: "Migration to Vite 8", state: "finished", stateReason: "Response complete", summary: "Config updated and the build works; two CSS warnings still need fixing.", environment: "VS Code", agent: "Codex", lastActivityAt: now - 12 * min }),
+  card({ id: 3, projectId: 1, title: "Migration to Vite 8", state: "finished", stateReason: "Response complete", summary: "Config updated and the build works; two CSS warnings still need fixing.", environment: "VS Code", agent: "Codex", unread: true, lastActivityAt: now - 12 * min }),
   card({ id: 4, projectId: 2, title: "Prices by market", state: "waiting", stateReason: "Has a question for you", summary: "Proposed two strategies for rounding prices in local currency.", lastActivityAt: now - 6 * min }),
   card({ id: 5, projectId: 2, title: "Rate cache", state: "closed", stateReason: "Session closed in the terminal", summary: "Added a 5-minute cache for rates, invalidated when the price list is updated.", lastActivityAt: now - 3 * 60 * min }),
   card({ id: 6, projectId: 3, title: "Review the Button components", titleIsProvisional: true, state: "idle", summaryStatus: "pending", summary: null, lastActivityAt: now - 2 * 60 * min }),
-  card({ id: 7, projectId: null, title: "Script to rename photos", state: "finished", summary: "Created a script that renames photos by the date they were taken.", lastActivityAt: now - 40 * min }),
+  card({ id: 7, projectId: null, title: "Script to rename photos", state: "finished", summary: "Created a script that renames photos by the date they were taken.", unread: true, lastActivityAt: now - 40 * min }),
 ];
 
 const projects = [
@@ -58,6 +59,7 @@ function counts(list: ConversationCard[]) {
     working: list.filter((c) => c.state === "working").length,
     waiting: list.filter((c) => c.state === "waiting" && !c.attentionSeen).length,
     finished: list.filter((c) => c.state === "finished").length,
+    unread: list.filter((c) => c.unread).length,
   };
 }
 
@@ -171,6 +173,9 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       if (c.state === "waiting") c.attentionSeen = true;
       return;
     }
+    case "mark_project_read":
+      for (const c of conversations) if (c.projectId === ((args.id as number | null) ?? null)) c.unread = false;
+      return;
     case "list_projects":
       return projects;
     case "get_companion":
@@ -187,8 +192,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "run_doctor":
       return checks;
     case "open_conversation":
+      conversations.find((c) => c.id === args.id)!.unread = false;
       return { outcome: "unreachable", message: "The terminal window isn't responding.", command: "cd '/Users/me/shop' && claude --resume 06f55790-efe7-498b-b053-66a90e022f50" };
     case "resume_conversation":
+      conversations.find((c) => c.id === args.id)!.unread = false;
       return { outcome: "resumed", app: "Terminal" };
     case "start_probe":
       return "p1";

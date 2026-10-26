@@ -255,6 +255,44 @@ fn dismiss_attention_ignores_conversations_that_are_not_waiting() {
 }
 
 #[test]
+fn finished_turn_stays_unread_until_its_project_is_opened_or_work_resumes() {
+    let mut w = World::new();
+    w.send("a", 100, "/src/shop", Kind::Prompt, T0);
+    w.send("b", 200, "/src/shop", Kind::Prompt, T0);
+    w.send("c", 300, "/src/blog", Kind::Prompt, T0);
+    w.send("a", 100, "/src/shop", Kind::Stop, T0 + 1);
+    w.send("b", 200, "/src/shop", Kind::Stop, T0 + 2);
+    w.send("c", 300, "/src/blog", Kind::Interrupt, T0 + 3);
+    // Interrupted by the user: they are already there.
+    assert!(!w.card("c", T0 + 4).unread);
+
+    // It outlives Finished, and the project goes ahead of the working ones.
+    let late = T0 + views::IDLE_AFTER_MS + 10;
+    assert_eq!(w.card("a", late).state, DisplayState::Idle);
+    assert!(w.card("a", late).unread);
+    w.send("c", 300, "/src/blog", Kind::Prompt, late);
+    let ov = views::overview(&w.t.conn, late + 1).unwrap();
+    assert_eq!(ov.projects[0].name, "shop");
+    assert_eq!(ov.projects[0].counts.unread, 2);
+
+    // Going back to work in the terminal clears it.
+    w.send("b", 200, "/src/shop", Kind::Prompt, late + 2);
+    assert!(!w.card("b", late + 3).unread);
+    w.send("b", 200, "/src/shop", Kind::Stop, late + 4);
+    assert!(w.card("b", late + 5).unread);
+
+    // Opening the project reads all of its conversations, not the others.
+    let shop = w.card("a", late).project_id;
+    w.t.mark_project_read(shop).unwrap();
+    assert!(!w.card("a", late + 6).unread && !w.card("b", late + 6).unread);
+    w.send("c", 300, "/src/blog", Kind::Stop, late + 7);
+    w.t.mark_project_read(shop).unwrap();
+    assert!(w.card("c", late + 8).unread);
+    w.t.mark_read(w.id("c")).unwrap();
+    assert!(!w.card("c", late + 9).unread);
+}
+
+#[test]
 fn hide_during_activity_then_new_activity_brings_back_same_entry() {
     let mut w = World::new();
     w.send("a", 100, "/src/shop", Kind::Prompt, T0);

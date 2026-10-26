@@ -13,6 +13,10 @@
   let data = $state<ProjectDetail | null>(null);
   let order: number[] = [];
   let lastOpened = -1;
+  // Results still unread on arrival, with the activity they had: they stay
+  // highlighted while you are here and are marked read right away. Any new
+  // activity (you went on in the terminal) clears the highlight.
+  let fresh = $state(new Map<number, number>());
   const cards = $derived(data ? stableOrder(data.conversations, (c) => c.id, order) : []);
 
   async function load() {
@@ -24,6 +28,11 @@
         order = next.conversations.map((c) => c.id);
       }
       data = next;
+      const unread = next.conversations.filter((c) => c.unread);
+      if (unread.length) {
+        fresh = new Map([...fresh, ...unread.map((c) => [c.id, c.lastActivityAt] as const)]);
+        await api.markProjectRead(id);
+      }
       if (next.conversations.length === 0) go({ name: "overview" });
     } catch (e) {
       failure(e);
@@ -81,7 +90,7 @@
   </div>
   <div class="scroll">
     {#each cards as card (card.id)}
-      <ConversationCardView {card} />
+      <ConversationCardView {card} highlight={fresh.get(card.id) === card.lastActivityAt} />
     {/each}
   </div>
 {/if}

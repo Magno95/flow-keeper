@@ -76,16 +76,32 @@ fn target(state: &AppState, id: i64) -> Res<access::Target> {
     access::target(&t.conn, id).map_err(err)?.ok_or_else(|| "conversation not found".to_string())
 }
 
+/// Going to the conversation counts as reading its result.
+fn mark_read(app: &AppHandle, state: &AppState, id: i64) -> Res<()> {
+    state.tracker.lock().map_err(err)?.mark_read(id).map_err(err)?;
+    notify_changed(app);
+    Ok(())
+}
+
 #[tauri::command]
-pub async fn open_conversation(state: State<'_, AppState>, id: i64) -> Res<AccessResult> {
+pub async fn open_conversation(app: AppHandle, state: State<'_, AppState>, id: i64) -> Res<AccessResult> {
     let t = target(&state, id)?;
+    mark_read(&app, &state, id)?;
     Ok(access::focus(&t))
 }
 
 #[tauri::command]
-pub async fn resume_conversation(state: State<'_, AppState>, id: i64) -> Res<AccessResult> {
+pub async fn resume_conversation(app: AppHandle, state: State<'_, AppState>, id: i64) -> Res<AccessResult> {
     let t = target(&state, id)?;
+    mark_read(&app, &state, id)?;
     Ok(access::resume(&t))
+}
+
+#[tauri::command]
+pub async fn mark_project_read(app: AppHandle, state: State<'_, AppState>, id: Option<i64>) -> Res<()> {
+    state.tracker.lock().map_err(err)?.mark_project_read(id).map_err(err)?;
+    notify_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]

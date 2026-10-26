@@ -245,7 +245,7 @@ impl Tracker {
         }
         if state_changes {
             tx.execute(
-                "UPDATE conversations SET state = ?1, state_detail = ?2, state_at = ?3, attention_seen = 0 WHERE id = ?4",
+                "UPDATE conversations SET state = ?1, state_detail = ?2, state_at = ?3, attention_seen = 0, unread = 0 WHERE id = ?4",
                 params![st, detail, e.source_at, conv.id],
             )?;
             effect.push_str(&format!("state={st};"));
@@ -310,6 +310,9 @@ impl Tracker {
                 (state::TURN_ENDED, Kind::Stop) => Some(NotifyKind::Finished),
                 _ => None,
             };
+            if kind == Some(NotifyKind::Finished) {
+                tx.execute("UPDATE conversations SET unread = 1 WHERE id = ?1", [conv.id])?;
+            }
             if let Some(kind) = kind {
                 tx.execute(
                     "INSERT OR IGNORE INTO notifications(conversation_id, event_id, kind, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -350,7 +353,7 @@ impl Tracker {
             if current {
                 let n = tx.execute(
                     "UPDATE conversations SET state = ?1, state_detail = 'process_exit', state_at = MAX(state_at, ?2),
-                       recap_due_at = COALESCE(recap_due_at, ?2)
+                       unread = 0, recap_due_at = COALESCE(recap_due_at, ?2)
                      WHERE id = ?3 AND state != ?1",
                     params![state::CLOSED, now, conversation],
                 )?;
@@ -398,6 +401,19 @@ impl Tracker {
             "UPDATE conversations SET attention_seen = 1 WHERE id = ?1 AND state = ?2",
             params![id, state::ATTENTION],
         )?;
+        Ok(())
+    }
+
+    /// Finished turn looked at: the highlight goes away.
+    pub fn mark_read(&mut self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE conversations SET unread = 0 WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Opening a project counts as reading all of its conversations: they
+    /// are usually side by side in the same editor window.
+    pub fn mark_project_read(&mut self, project_id: Option<i64>) -> Result<()> {
+        self.conn.execute("UPDATE conversations SET unread = 0 WHERE project_id IS ?1", [project_id])?;
         Ok(())
     }
 

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Window, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Monitor, Window, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracker_core::store;
 
@@ -33,6 +33,29 @@ const GAP: f64 = 10.0;
 const MARGIN: f64 = 12.0;
 /// Companion size from `tauri.conf.json`, without extra space above.
 const COMPANION_SIZE: (f64, f64) = (112.0, 96.0);
+
+// Positions and sizes are in logical points: on macOS they are the only
+// coordinates shared by every monitor. Physical pixels depend on each
+// screen's scale, and a window converts them with the scale of the screen
+// it is on, so with displays of different density the panel would end up
+// on the wrong one.
+
+/// Visible area of a monitor in points: (x, y, width, height).
+fn work_area(m: &Monitor) -> (f64, f64, f64, f64) {
+    let a = m.work_area();
+    let scale = m.scale_factor();
+    let pos = a.position.to_logical::<f64>(scale);
+    let size = a.size.to_logical::<f64>(scale);
+    (pos.x, pos.y, size.width, size.height)
+}
+
+/// Position and size of a window in points: (x, y, width, height).
+fn frame(w: &tauri::WebviewWindow) -> Option<(f64, f64, f64, f64)> {
+    let scale = w.scale_factor().ok()?;
+    let pos = w.outer_position().ok()?.to_logical::<f64>(scale);
+    let size = w.outer_size().ok()?.to_logical::<f64>(scale);
+    Some((pos.x, pos.y, size.width, size.height))
+}
 
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Flow Keeper", true, None::<&str>)?;
@@ -108,16 +131,16 @@ pub fn set_companion_headroom(app: &AppHandle, extra: f64) {
     if (headroom.0 - extra).abs() < 0.5 {
         return;
     }
-    let (Ok(pos), Ok(scale)) = (w.outer_position(), w.scale_factor()) else { return };
+    let Some((x, y, _, _)) = frame(&w) else { return };
     // Top corner of the window without the extra space.
-    let base_y = pos.y as f64 + headroom.1;
-    let mut shift = extra * scale;
+    let base_y = y + headroom.1;
+    let mut shift = extra;
     if let Ok(Some(m)) = w.current_monitor() {
-        shift = shift.min((base_y - m.work_area().position.y as f64).max(0.0));
+        shift = shift.min((base_y - work_area(&m).1).max(0.0));
     }
     *headroom = (extra, shift);
     let _ = w.set_size(LogicalSize::new(COMPANION_SIZE.0, COMPANION_SIZE.1 + extra));
-    let _ = w.set_position(PhysicalPosition::new(pos.x as f64, base_y - shift));
+    let _ = w.set_position(LogicalPosition::new(x, base_y - shift));
 }
 
 /// Saved companion position, if still inside a monitor; otherwise the
@@ -129,7 +152,7 @@ pub fn restore_companion(app: &AppHandle) {
         let tracker = state.tracker.lock().expect("tracker");
         store::meta(&tracker.conn, "companion_pos").ok().flatten()
     };
-    let size = w.outer_size().unwrap_or_default();
+    let (cw, ch) = frame(&w).map_or(COMPANION_SIZE, |f| (f.2, f.3));
     let saved = saved.and_then(|v| {
         let (x, y) = v.split_once(',')?;
         Some((x.parse::<f64>().ok()?, y.parse::<f64>().ok()?))
@@ -137,23 +160,17 @@ pub fn restore_companion(app: &AppHandle) {
     let monitors = w.available_monitors().unwrap_or_default();
     if let Some((x, y)) = saved {
         let inside = monitors.iter().any(|m| {
-            let a = m.work_area();
-            x >= a.position.x as f64 - 1.0
-                && y >= a.position.y as f64 - 1.0
-                && x + size.width as f64 <= (a.position.x + a.size.width as i32) as f64 + 1.0
-                && y + size.height as f64 <= (a.position.y + a.size.height as i32) as f64 + 1.0
+            let (ax, ay, aw, ah) = work_area(m);
+            x >= ax - 1.0 && y >= ay - 1.0 && x + cw <= ax + aw + 1.0 && y + ch <= ay + ah + 1.0
         });
         if inside {
-            let _ = w.set_position(PhysicalPosition::new(x, y));
+            let _ = w.set_position(LogicalPosition::new(x, y));
             return;
         }
     }
     if let Ok(Some(m)) = w.primary_monitor() {
-        let a = m.work_area();
-        let scale = m.scale_factor();
-        let x = (a.position.x + a.size.width as i32) as f64 - size.width as f64 - 24.0 * scale;
-        let y = (a.position.y + a.size.height as i32) as f64 - size.height as f64 - 24.0 * scale;
-        let _ = w.set_position(PhysicalPosition::new(x, y));
+        let (ax, ay, aw, ah) = work_area(&m);
+        let _ = w.set_position(LogicalPosition::new(ax + aw - cw - 24.0, ay + ah - ch - 24.0));
     }
 }
 
@@ -185,24 +202,18 @@ pub fn hide_panel(app: &AppHandle) {
 fn position_panel(app: &AppHandle) -> Option<Gaze> {
     let panel = app.get_webview_window(PANEL)?;
     let companion = app.get_webview_window(COMPANION).filter(|c| c.is_visible().unwrap_or(false));
-    let anchor = companion.as_ref().and_then(|c| Some((c.outer_position().ok()?, c.outer_size().ok()?, c.current_monitor().ok()??)));
-    let psize = panel.outer_size().unwrap_or_default();
-    let (pw, ph) = (psize.width as f64, psize.height as f64);
+    let anchor = companion.as_ref().and_then(|c| Some((frame(c)?, c.current_monitor().ok()??)));
+    let (pw, ph) = frame(&panel).map_or((440.0, 680.0), |f| (f.2, f.3));
 
     let mut gaze = None;
     let (x, y) = match anchor {
-        Some((pos, size, monitor)) => {
-            let a = monitor.work_area();
-            let scale = monitor.scale_factor();
-            let (ax, ay, aw, ah) = (a.position.x as f64, a.position.y as f64, a.size.width as f64, a.size.height as f64);
-            let (cx, cy, cw, ch) = (pos.x as f64, pos.y as f64, size.width as f64, size.height as f64);
-            let gap = GAP * scale;
-            let margin = MARGIN * scale;
+        Some(((cx, cy, cw, ch), monitor)) => {
+            let (ax, ay, aw, ah) = work_area(&monitor);
             let right_space = ax + aw - (cx + cw);
-            let x = if right_space >= pw + gap + margin { cx + cw + gap } else { cx - pw - gap };
+            let x = if right_space >= pw + GAP + MARGIN { cx + cw + GAP } else { cx - pw - GAP };
             let y = cy + ch - ph;
-            let x = x.clamp(ax + margin, (ax + aw - pw - margin).max(ax + margin));
-            let y = y.clamp(ay + margin, (ay + ah - ph - margin).max(ay + margin));
+            let x = x.clamp(ax + MARGIN, (ax + aw - pw - MARGIN).max(ax + MARGIN));
+            let y = y.clamp(ay + MARGIN, (ay + ah - ph - MARGIN).max(ay + MARGIN));
             // The center of the panel's content relative to the companion's face.
             let (fx, fy) = (cx + cw / 2.0, cy + ch / 2.0);
             let (px, py) = (x + pw / 2.0, y + ph / 2.0);
@@ -215,15 +226,14 @@ fn position_panel(app: &AppHandle) -> Option<Gaze> {
             let monitor = panel.current_monitor().ok().flatten().or_else(|| panel.primary_monitor().ok().flatten());
             match monitor {
                 Some(m) => {
-                    let a = m.work_area();
-                    let scale = m.scale_factor();
-                    ((a.position.x + a.size.width as i32) as f64 - pw - MARGIN * scale, a.position.y as f64 + 6.0 * scale)
+                    let (ax, ay, aw, _) = work_area(&m);
+                    (ax + aw - pw - MARGIN, ay + 6.0)
                 }
                 None => (100.0, 100.0),
             }
         }
     };
-    let _ = panel.set_position(PhysicalPosition::new(x, y));
+    let _ = panel.set_position(LogicalPosition::new(x, y));
     gaze
 }
 
@@ -232,9 +242,10 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     match (window.label(), event) {
         (COMPANION, WindowEvent::Moved(pos)) => {
             let state = app.state::<AppState>();
+            let pos = pos.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
             // Save the position without the speech bubble's space.
             let shift = state.companion_headroom.lock().expect("headroom").1;
-            *state.companion_pos.lock().expect("pos") = Some((pos.x as f64, pos.y as f64 + shift));
+            *state.companion_pos.lock().expect("pos") = Some((pos.x, pos.y + shift));
         }
         (PANEL, WindowEvent::Focused(false)) => {
             let state = app.state::<AppState>();
