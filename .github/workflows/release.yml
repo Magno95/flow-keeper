@@ -59,6 +59,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A locally verified release may already have been uploaded.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release already exists; keeping its verified assets."
+            exit 0
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "${{ steps.pack.outputs.archive }}" "${{ steps.pack.outputs.archive }}.sha256" \
             --title "Flow Keeper $GITHUB_REF_NAME" --generate-notes
