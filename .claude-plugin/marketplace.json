@@ -1,0 +1,13 @@
+{
+  "name": "flow-keeper",
+  "owner": { "name": "Davide Magnoni" },
+  "plugins": [
+    {
+      "name": "flow-keeper",
+      "displayName": "Flow Keeper",
+      "description": "Sends Claude Code conversation events to Flow Keeper, locally.",
+      "source": "./plugin",
+      "version": "0.7.0"
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+# Creates an installable release when a vX.Y.Z tag is pushed.
+# The app is signed ad hoc: the installer downloads it with `gh` (no quarantine),
+# so no Developer ID certificate or notarization is needed.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    # Build releases only in the personal repository.
+    if: github.repository == 'Magno95/flow-keeper'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Core tests
+        run: cargo test -p tracker-core
+
+      - name: Universal build
+        working-directory: app
+        run: |
+          npm ci
+          npx tauri build --target universal-apple-darwin --bundles app
+
+      - name: Archive
+        id: pack
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bundle="target/universal-apple-darwin/release/bundle/macos"
+          archive="Flow-Keeper_${version}_universal.app.tar.gz"
+          # As long as 0.4 installations exist, the bundle must be archived under the
+          # old name: 0.4 only updates from “AI Tracker.app”. The new app moves
+          # itself to “Flow Keeper.app” on first launch.
+          tar -czf "$archive" -C "$bundle" -s '/^Flow Keeper\.app/AI Tracker.app/' "Flow Keeper.app"
+          shasum -a 256 "$archive" > "$archive.sha256"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "${{ steps.pack.outputs.archive }}" "${{ steps.pack.outputs.archive }}.sha256" \
+            --title "Flow Keeper $GITHUB_REF_NAME" --generate-notes

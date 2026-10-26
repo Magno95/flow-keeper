@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["core", "app/src-tauri"]
+
+[workspace.package]
+version = "0.7.0"
+edition = "2021"
+license = "UNLICENSED"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

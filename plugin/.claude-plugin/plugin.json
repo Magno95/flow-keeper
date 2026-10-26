@@ -1,0 +1,9 @@
+{
+  "name": "flow-keeper",
+  "displayName": "Flow Keeper",
+  "description": "Connects Claude Code to Flow Keeper: records conversation start, turns, attention requests and closing, locally.",
+  "version": "0.7.0",
+  "author": { "name": "Davide Magnoni" },
+  "repository": "https://github.com/Magno95/flow-keeper",
+  "license": "UNLICENSED"
+}

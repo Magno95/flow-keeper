@@ -1,0 +1,632 @@
+{
+  "frames": {
+    "rest-1": {
+      "file": "rest-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "rest-2": {
+      "file": "rest-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "rest-3": {
+      "file": "rest-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "rest-4": {
+      "file": "rest-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "rest-5": {
+      "file": "rest-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "rest-6": {
+      "file": "rest-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "working-1": {
+      "file": "working-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "working-2": {
+      "file": "working-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "working-3": {
+      "file": "working-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "working-4": {
+      "file": "working-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "working-5": {
+      "file": "working-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "working-6": {
+      "file": "working-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "waiting-1": {
+      "file": "waiting-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "waiting-2": {
+      "file": "waiting-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "waiting-3": {
+      "file": "waiting-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "waiting-4": {
+      "file": "waiting-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "waiting-5": {
+      "file": "waiting-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "waiting-6": {
+      "file": "waiting-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "problem-1": {
+      "file": "problem-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "problem-2": {
+      "file": "problem-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "problem-3": {
+      "file": "problem-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "problem-4": {
+      "file": "problem-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "problem-5": {
+      "file": "problem-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "problem-6": {
+      "file": "problem-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "finished-1": {
+      "file": "finished-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "finished-2": {
+      "file": "finished-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "finished-3": {
+      "file": "finished-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "finished-4": {
+      "file": "finished-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "finished-5": {
+      "file": "finished-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "finished-6": {
+      "file": "finished-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "wink-1": {
+      "file": "wink-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "wink-2": {
+      "file": "wink-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "wink-3": {
+      "file": "wink-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "wink-4": {
+      "file": "wink-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "wink-5": {
+      "file": "wink-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "wink-6": {
+      "file": "wink-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "down-1": {
+      "file": "down-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "down-2": {
+      "file": "down-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "down-3": {
+      "file": "down-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "down-4": {
+      "file": "down-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "down-5": {
+      "file": "down-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "down-6": {
+      "file": "down-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "up-1": {
+      "file": "up-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "up-2": {
+      "file": "up-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "up-3": {
+      "file": "up-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "up-4": {
+      "file": "up-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "up-5": {
+      "file": "up-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "up-6": {
+      "file": "up-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "genie-1": {
+      "file": "genie-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "genie-2": {
+      "file": "genie-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "genie-3": {
+      "file": "genie-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "genie-4": {
+      "file": "genie-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "genie-5": {
+      "file": "genie-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "genie-6": {
+      "file": "genie-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "intense-1": {
+      "file": "intense-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "intense-2": {
+      "file": "intense-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "intense-3": {
+      "file": "intense-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "intense-4": {
+      "file": "intense-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "intense-5": {
+      "file": "intense-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "intense-6": {
+      "file": "intense-6.png",
+      "width": 192,
+      "height": 144
+    },
+    "new-1": {
+      "file": "new-1.png",
+      "width": 192,
+      "height": 176
+    },
+    "new-2": {
+      "file": "new-2.png",
+      "width": 192,
+      "height": 176
+    },
+    "new-3": {
+      "file": "new-3.png",
+      "width": 192,
+      "height": 176
+    },
+    "new-4": {
+      "file": "new-4.png",
+      "width": 192,
+      "height": 176
+    },
+    "new-5": {
+      "file": "new-5.png",
+      "width": 192,
+      "height": 176
+    },
+    "new-6": {
+      "file": "new-6.png",
+      "width": 192,
+      "height": 176
+    },
+    "update-1": {
+      "file": "update-1.png",
+      "width": 192,
+      "height": 144
+    },
+    "update-2": {
+      "file": "update-2.png",
+      "width": 192,
+      "height": 144
+    },
+    "update-3": {
+      "file": "update-3.png",
+      "width": 192,
+      "height": 144
+    },
+    "update-4": {
+      "file": "update-4.png",
+      "width": 192,
+      "height": 144
+    },
+    "update-5": {
+      "file": "update-5.png",
+      "width": 192,
+      "height": 144
+    },
+    "update-6": {
+      "file": "update-6.png",
+      "width": 192,
+      "height": 144
+    }
+  },
+  "overlays": {
+    "bubble-small": {
+      "file": "bubble-small.png",
+      "width": 193,
+      "height": 222,
+      "left": -0.5
+    },
+    "bubble": {
+      "file": "bubble.png",
+      "width": 233,
+      "height": 262,
+      "left": -20.5
+    }
+  },
+  "sequences": {
+    "rest": {
+      "frames": [
+        "rest-1",
+        "rest-2",
+        "rest-3",
+        "rest-4",
+        "rest-5",
+        "rest-6"
+      ],
+      "durations": [
+        1800,
+        90,
+        110,
+        90,
+        300,
+        1600
+      ]
+    },
+    "working": {
+      "frames": [
+        "working-1",
+        "working-2",
+        "working-3",
+        "working-4",
+        "working-5",
+        "working-6"
+      ],
+      "durations": [
+        450,
+        120,
+        400,
+        250,
+        120,
+        400
+      ]
+    },
+    "waiting": {
+      "frames": [
+        "waiting-1",
+        "waiting-2",
+        "waiting-3",
+        "waiting-4",
+        "waiting-5",
+        "waiting-6"
+      ],
+      "durations": [
+        150,
+        120,
+        250,
+        160,
+        250,
+        1000
+      ]
+    },
+    "problem": {
+      "frames": [
+        "problem-1",
+        "problem-2",
+        "problem-3",
+        "problem-4",
+        "problem-5",
+        "problem-6"
+      ],
+      "durations": [
+        150,
+        200,
+        250,
+        300,
+        300,
+        1000
+      ]
+    },
+    "finished": {
+      "frames": [
+        "finished-1",
+        "finished-2",
+        "finished-3",
+        "finished-4",
+        "finished-5",
+        "finished-6"
+      ],
+      "durations": [
+        100,
+        150,
+        300,
+        200,
+        150,
+        200
+      ]
+    },
+    "wink": {
+      "frames": [
+        "wink-1",
+        "wink-2",
+        "wink-3",
+        "wink-4",
+        "wink-5",
+        "wink-6"
+      ],
+      "durations": [
+        80,
+        90,
+        180,
+        100,
+        90,
+        120
+      ]
+    },
+    "down": {
+      "frames": [
+        "down-1",
+        "down-2",
+        "down-3",
+        "down-4",
+        "down-5",
+        "down-6"
+      ],
+      "durations": null
+    },
+    "up": {
+      "frames": [
+        "up-1",
+        "up-2",
+        "up-3",
+        "up-4",
+        "up-5",
+        "up-6"
+      ],
+      "durations": null
+    },
+    "genie": {
+      "frames": [
+        "genie-1",
+        "genie-2",
+        "genie-3",
+        "genie-4",
+        "genie-5",
+        "genie-6"
+      ],
+      "durations": [
+        300,
+        140,
+        700,
+        450,
+        450,
+        1400
+      ]
+    },
+    "intense": {
+      "frames": [
+        "intense-1",
+        "intense-2",
+        "intense-3",
+        "intense-4",
+        "intense-5",
+        "intense-6"
+      ],
+      "durations": [
+        250,
+        200,
+        450,
+        700,
+        600,
+        1600
+      ]
+    },
+    "new": {
+      "frames": [
+        "new-1",
+        "new-2",
+        "new-3",
+        "new-4",
+        "new-5",
+        "new-6"
+      ],
+      "durations": [
+        120,
+        110,
+        380,
+        260,
+        160,
+        220
+      ]
+    },
+    "update": {
+      "frames": [
+        "update-1",
+        "update-2",
+        "update-3",
+        "update-4",
+        "update-5",
+        "update-6"
+      ],
+      "durations": [
+        400,
+        160,
+        650,
+        450,
+        350,
+        900
+      ]
+    }
+  },
+  "gazes": {
+    "down-1": {
+      "dx": -0.04291244046159973,
+      "dy": 0.08749724352912647
+    },
+    "down-2": {
+      "dx": 0.022594571248201294,
+      "dy": 0.09528154207602137
+    },
+    "down-3": {
+      "dx": 0.09867059305931403,
+      "dy": 0.09415314177010205
+    },
+    "down-4": {
+      "dx": 0.0014433252432995273,
+      "dy": 0.08588687505561043
+    },
+    "down-5": {
+      "dx": -0.15046645236935058,
+      "dy": 0.0669923437997598
+    },
+    "down-6": {
+      "dx": -0.014908721452600032,
+      "dy": 0.07065807861266946
+    },
+    "up-1": {
+      "dx": 0.045010818498756267,
+      "dy": -0.08783760745825722
+    },
+    "up-2": {
+      "dx": 0.06235916833969525,
+      "dy": -0.09889956562112186
+    },
+    "up-3": {
+      "dx": 0.11229632460307336,
+      "dy": -0.0921246821092824
+    },
+    "up-4": {
+      "dx": 0.003375793929201329,
+      "dy": -0.10534080645599264
+    },
+    "up-5": {
+      "dx": -0.020577327404359504,
+      "dy": -0.08374540430848994
+    },
+    "up-6": {
+      "dx": -0.02016158807029366,
+      "dy": -0.08457259200521415
+    }
+  }
+}

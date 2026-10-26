@@ -1,0 +1,17 @@
+{
+  "name": "flow-keeper-terminal",
+  "displayName": "Flow Keeper",
+  "description": "Lets Flow Keeper bring a conversation's exact terminal to the front.",
+  "version": "0.1.0",
+  "publisher": "flow-keeper",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Other"],
+  "extensionKind": ["ui"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": true },
+    "virtualWorkspaces": true
+  }
+}
