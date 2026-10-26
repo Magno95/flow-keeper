@@ -4,7 +4,7 @@
   "description": "Connects Codex CLI to Flow Keeper: records conversation start, turns, attention requests and closing, locally.",
   "author": { "name": "Davide Magnoni" },
   "repository": "https://github.com/Magno95/flow-keeper",
-  "license": "UNLICENSED",
+  "license": "0BSD",
   "hooks": "./hooks/codex.json",
   "interface": {
     "displayName": "Flow Keeper",

@@ -1,0 +1,12 @@
+title = "Flow Keeper secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic token used to test transcript secret redaction"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)core/src/transcript\.rs$''']
+regexTarget = "secret"
+regexes = ['''^abcdef123456$''']

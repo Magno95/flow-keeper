@@ -1,25 +1,38 @@
 # Flow Keeper
 
-A macOS app that collects your Claude Code and Codex CLI conversations, groups them by project, and tells you which agent is working, which has finished and which is waiting for you. FloK, the little robot on your desktop, shows you the status at a glance. Every conversation has a topic and a short summary, so you can pick up where you left off without opening logs or terminals.
+![FloK, your desktop flow companion](companion-ivory-animations/00-base.png)
+
+Keep your flow, even when your work is spread across several terminals. **FloK** is your little desktop companion: it keeps your Claude Code and Codex CLI sessions in view, so you can see who's working, who's finished and who needs you without checking every terminal.
+
+Flow Keeper is a macOS app that groups those conversations by project and gives each one a topic and a short summary. Find the session you need, jump back to its terminal, and pick up where you left off.
 
 First version: terminal sessions of Claude Code and Codex CLI only, macOS only. Desktop apps and editor extensions are not tracked.
 
 ## Installation
 
-Installation uses an authenticated [GitHub CLI](https://cli.github.com) (`brew install gh && gh auth login`).
+Requires **macOS 13 or later** (Apple Silicon or Intel) and an authenticated [GitHub CLI](https://cli.github.com). With [Homebrew](https://brew.sh) installed:
+
+```sh
+brew install gh
+gh auth login
+```
+
+Then install FloK:
 
 ```sh
 gh api -H "Accept: application/vnd.github.raw" \
   repos/Magno95/flow-keeper/contents/scripts/install.sh | bash
 ```
 
-The script downloads the latest release and installs the app in `~/Applications`. If there is no release yet, it builds from source. Then it launches the app.
+The script downloads the latest release, verifies its SHA-256 checksum, installs the app in `~/Applications`, and launches it. A release installation does not require Rust or Node.js. Install Claude Code or Codex CLI separately to track their sessions.
+
+If no release is available, the script falls back to a source build. This requires Xcode Command Line Tools (`xcode-select --install`), [Rust](https://rustup.rs), and Node.js 22.12 or later. You can also request that path explicitly with `./scripts/install.sh --from-source` from a clone.
 
 On first launch, the “Connect your agents” setup connects Claude Code and Codex with one click each. The app registers the hooks plugin, which ships inside the bundle, with Claude Code from a local folder (`claude plugin marketplace add <data folder>/claude-plugin`). No GitHub access is needed, you don't type any `/plugin` commands, and your `settings.json` is left untouched. Every time the app updates, the plugin is realigned automatically. You can disconnect it from Settings → “Disconnect Claude Code”.
 
 Codex works the same way (`codex plugin marketplace add <data folder>/codex-plugin`, then `codex plugin add`), plus one step that's up to you: Codex only runs a plugin's hooks after you approve them. Open Codex, type `/hooks` and approve the Flow Keeper ones. You only need to do this once: app updates don't require a new approval. The doctor reminds you until they're approved.
 
-**Why macOS doesn't block the unsigned app.** Gatekeeper steps in on apps downloaded from a browser, which get the `com.apple.quarantine` attribute. `gh` and `git` don't add it. The script then signs the app ad hoc on your Mac, as with any locally built program. No Developer ID certificate or notarization is needed.
+**macOS signing.** The app is signed ad hoc, rather than notarized with an Apple Developer ID. The installer removes the downloaded bundle's quarantine attribute and signs the installed copy locally. Use the installation command above for this installation path.
 
 Useful options (from a clone: `./scripts/install.sh …`):
 
@@ -28,6 +41,14 @@ Useful options (from a clone: `./scripts/install.sh …`):
 | `--from-source` | Builds on your Mac (requires Rust and Node.js) |
 | `--version v0.1.0` | Installs a specific release |
 | `--no-open` | Doesn't launch the app when done |
+
+To use the same steps from a local checkout:
+
+```sh
+git clone https://github.com/Magno95/flow-keeper.git
+cd flow-keeper
+./scripts/install.sh
+```
 
 Alternatively, without the app (for example to try just the hooks), you can install the plugin by hand from the repository's marketplace: `/plugin marketplace add Magno95/flow-keeper` and then `/plugin install flow-keeper@flow-keeper`.
 
@@ -107,3 +128,7 @@ To publish a release: bump the version in `Cargo.toml`, `Cargo.lock`, `app/packa
 ## Privacy
 
 Database, events and settings stay in `~/Library/Application Support/Flow Keeper`, with permissions restricted to your user. With summaries on, parts of your conversations are sent to Claude (with `claude -p` through your Claude Code account, or to the API with your key, stored in the keychain). You can exclude a project from its menu: for that project, state, origin and manual titles remain. The diagnostic log contains no conversation content. Check your company policies before turning on summaries for work projects.
+
+## License
+
+Flow Keeper's original code and FloK artwork are available under the [Zero-Clause BSD license (0BSD)](LICENSE). Use, modify and redistribute them for any purpose, including commercial projects, without an attribution requirement. Third-party dependencies retain their own licenses.

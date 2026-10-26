@@ -5,5 +5,5 @@
   "version": "0.7.0",
   "author": { "name": "Davide Magnoni" },
   "repository": "https://github.com/Magno95/flow-keeper",
-  "license": "UNLICENSED"
+  "license": "0BSD"
 }

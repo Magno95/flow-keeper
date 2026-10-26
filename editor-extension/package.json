@@ -4,7 +4,7 @@
   "description": "Lets Flow Keeper bring a conversation's exact terminal to the front.",
   "version": "0.1.0",
   "publisher": "flow-keeper",
-  "license": "UNLICENSED",
+  "license": "0BSD",
   "engines": { "vscode": "^1.75.0" },
   "categories": ["Other"],
   "extensionKind": ["ui"],

@@ -24,7 +24,7 @@ set -euo pipefail
 REPO="${FLOW_KEEPER_REPO:-Magno95/flow-keeper}"
 APP_NAME="Flow Keeper"
 DEST_DIR="${FLOW_KEEPER_APP_DIR:-$HOME/Applications}"
-DATA_DIR="$HOME/Library/Application Support/Flow Keeper"
+DATA_DIR="${FLOW_KEEPER_HOME:-$HOME/Library/Application Support/Flow Keeper}"
 MANIFEST="$DATA_DIR/install-manifest.json"
 # App name up to 0.4: its bundle and data folder get replaced.
 OLD_APP_NAME="AI Tracker"
@@ -94,12 +94,20 @@ download_release() {
   local tag_args=()
   [ -n "$version" ] && tag_args=("$version")
   say "Downloading the ${version:-latest} release from ${REPO}…"
-  if ! gh release download ${tag_args[@]+"${tag_args[@]}"} --repo "$REPO" --pattern "*.app.tar.gz" --dir "$work" 2>"$work/gh.err"; then
+  if ! gh release download ${tag_args[@]+"${tag_args[@]}"} --repo "$REPO" --pattern "*.app.tar.gz" --pattern "*.app.tar.gz.sha256" --dir "$work" 2>"$work/gh.err"; then
     [ "$mode" = "release" ] && die "Download failed: $(cat "$work/gh.err")"
     warn "No release available: building from source."
     return 1
   fi
-  tar -xzf "$work"/*.app.tar.gz -C "$work"
+  local archives=("$work"/*.app.tar.gz)
+  [ "${#archives[@]}" = 1 ] && [ -f "${archives[0]}" ] || die "Expected exactly one release archive."
+  local archive="${archives[0]}" expected actual
+  [ -f "$archive.sha256" ] || die "Release checksum is missing."
+  expected="$(awk 'NR == 1 { print tolower($1) }' "$archive.sha256")"
+  [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || die "Invalid release checksum."
+  actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  [ "$actual" = "$expected" ] || die "Release checksum does not match."
+  tar -xzf "$archive" -C "$work"
   # Transition releases contain the bundle under the old name, because 0.4
   # can only update that way.
   app_src="$work/$APP_NAME.app"
@@ -110,6 +118,9 @@ download_release() {
 build_from_source() {
   command -v cargo >/dev/null || die "Building requires Rust: https://rustup.rs"
   command -v npm >/dev/null || die "Building requires Node.js: brew install node"
+  command -v node >/dev/null || die "Building requires Node.js 22.12 or later."
+  node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)' || die "Building requires Node.js 22.12 or later."
+  xcode-select -p >/dev/null 2>&1 || die "Building requires Xcode Command Line Tools: xcode-select --install"
   local root="$repo_root"
   if [ -z "$root" ]; then
     need_gh
@@ -118,7 +129,7 @@ build_from_source() {
     root="$work/src"
   fi
   say "Building the app (a few minutes the first time)…"
-  (cd "$root/app" && npm ci --silent && npx tauri build --bundles app) >"$work/build.log" 2>&1 || {
+  (cd "$root/app" && npm ci --silent && npx tauri build --bundles app -- --locked) >"$work/build.log" 2>&1 || {
     tail -30 "$work/build.log" >&2
     die "Build failed."
   }
@@ -185,7 +196,7 @@ fi
 
 # AI Tracker's data folder: move it here as the app would, leaving a symlink
 # for the hooks of sessions already open.
-if [ -d "$OLD_DATA_DIR" ] && [ ! -L "$OLD_DATA_DIR" ] && [ ! -e "$DATA_DIR" ]; then
+if [ -z "${FLOW_KEEPER_HOME:-}" ] && [ -d "$OLD_DATA_DIR" ] && [ ! -L "$OLD_DATA_DIR" ] && [ ! -e "$DATA_DIR" ]; then
   mv "$OLD_DATA_DIR" "$DATA_DIR" && ln -s "$DATA_DIR" "$OLD_DATA_DIR"
 fi
 mkdir -p "$DATA_DIR"

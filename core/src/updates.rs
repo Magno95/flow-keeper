@@ -176,13 +176,11 @@ pub fn download(gh: &Path, path_env: &str, repo: &str, release: &Release, dir: &
     )?;
     let archive = dir.join(&release.archive);
     let bytes = fs::read(&archive).context("archive not downloaded")?;
-    // The checksum is optional in old releases, but if present it must match.
-    if let Ok(expected) = fs::read_to_string(dir.join(&checksum)) {
-        let expected = expected.split_whitespace().next().unwrap_or_default().to_lowercase();
-        let actual = format!("{:x}", Sha256::digest(&bytes));
-        if expected != actual {
-            bail!("the downloaded archive does not match the release checksum");
-        }
+    let expected = fs::read_to_string(dir.join(&checksum)).context("release checksum not downloaded")?;
+    let expected = expected.split_whitespace().next().unwrap_or_default().to_lowercase();
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if expected != actual {
+        bail!("the downloaded archive does not match the release checksum");
     }
     let status = Command::new("/usr/bin/tar")
         .arg("-xzf")
