@@ -146,6 +146,9 @@ esac
 
 # ---- 2. Install the app -------------------------------------------------------
 
+app_version="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$app_src/Contents/Info.plist" 2>/dev/null)" || die "Invalid app bundle: version is missing."
+[ -n "$app_version" ] || die "Invalid app bundle: version is empty."
+
 mkdir -p "$DEST_DIR"
 target="$DEST_DIR/$APP_NAME.app"
 
@@ -180,8 +183,8 @@ say "App installed in $target"
 # The app under the old name (including the one the update was started from).
 old_bundle="$DEST_DIR/$OLD_APP_NAME.app"
 if [ -d "$old_bundle" ]; then
-  old_id="$(defaults read "$old_bundle/Contents/Info" CFBundleIdentifier 2>/dev/null || true)"
-  if [ "$old_id" = "$OLD_BUNDLE_ID" ] || [ "$old_id" = "$(defaults read "$target/Contents/Info" CFBundleIdentifier 2>/dev/null)" ]; then
+  old_id="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$old_bundle/Contents/Info.plist" 2>/dev/null || true)"
+  if [ "$old_id" = "$OLD_BUNDLE_ID" ] || [ "$old_id" = "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$target/Contents/Info.plist" 2>/dev/null)" ]; then
     rm -rf "$old_bundle"
     say "Removed the previous version ($OLD_APP_NAME)."
   fi
@@ -201,7 +204,6 @@ if [ -z "${FLOW_KEEPER_HOME:-}" ] && [ -d "$OLD_DATA_DIR" ] && [ ! -L "$OLD_DATA
 fi
 mkdir -p "$DATA_DIR"
 chmod 700 "$DATA_DIR"
-app_version="$(defaults read "$target/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo unknown)"
 cat >"$MANIFEST" <<EOF
 {
   "version": "$app_version",

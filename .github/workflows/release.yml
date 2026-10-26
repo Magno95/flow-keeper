@@ -35,6 +35,9 @@ jobs:
       - name: Core tests
         run: cargo test -p tracker-core
 
+      - name: Installer tests
+        run: python3 scripts/test-install.py
+
       - name: Universal build
         working-directory: app
         run: |
