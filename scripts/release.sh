@@ -49,6 +49,9 @@ else
   echo "No activity server in this build (FLOK_ACTIVITY_ENDPOINT is not set)."
 fi
 
+# Paths of this Mac (home, clone) stay out of the binaries' panic messages.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=~ --remap-path-prefix=$PWD=."
+
 cargo test -p tracker-core
 (cd app && npm ci && npx tauri build --target universal-apple-darwin --bundles app)
 
