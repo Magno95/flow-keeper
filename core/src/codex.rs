@@ -92,6 +92,43 @@ pub fn read_origin(path: &Path) -> Option<Origin> {
     })
 }
 
+/// Who decides approvals (`user` or `auto_review`), from the most recent
+/// `turn_context` of the rollout. Read backwards from the end: the turn in
+/// progress is the last one written, and its context can be far from the end.
+pub fn approvals_reviewer(path: &Path) -> Option<String> {
+    const CHUNK: u64 = 256 * 1024;
+    const LIMIT: u64 = 32 * 1024 * 1024;
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut end = len;
+    let mut carry = Vec::new();
+    while end > 0 && len - end < LIMIT {
+        let start = end.saturating_sub(CHUNK);
+        let mut buf = vec![0; (end - start) as usize];
+        file.seek(SeekFrom::Start(start)).ok()?;
+        file.read_exact(&mut buf).ok()?;
+        buf.extend_from_slice(&carry);
+        // The first line of the chunk can be cut: it is completed by the next one.
+        let cut = match buf.iter().position(|b| *b == b'\n') {
+            _ if start == 0 => 0,
+            Some(i) => i + 1,
+            None => buf.len(),
+        };
+        for line in buf[cut..].split(|b| *b == b'\n').rev() {
+            if !line.windows(14).any(|w| w == b"\"turn_context\"") {
+                continue;
+            }
+            let Ok(v) = serde_json::from_slice::<Value>(line) else { continue };
+            if v.get("type").and_then(Value::as_str) == Some("turn_context") {
+                return v.pointer("/payload/approvals_reviewer").and_then(Value::as_str).map(str::to_string);
+            }
+        }
+        carry = buf[..cut].to_vec();
+        end = start;
+    }
+    None
+}
+
 pub fn normalize(rec: &SpoolRecord, opts: &NormalizeOptions) -> Normalized {
     let p = &rec.payload;
     let name = rec
@@ -136,6 +173,13 @@ pub fn normalize(rec: &SpoolRecord, opts: &NormalizeOptions) -> Normalized {
             }
             _ => Kind::ToolActivity,
         },
+        // With automatic review the request goes to the reviewer, not to the
+        // user: the hook still fires, but nothing is waiting for an answer.
+        "PermissionRequest"
+            if transcript_path.as_deref().and_then(|t| approvals_reviewer(Path::new(t))).as_deref() == Some("auto_review") =>
+        {
+            Kind::ToolActivity
+        }
         "PermissionRequest" => {
             let tool = p.str("tool_name");
             detail = tool.clone();
@@ -366,6 +410,32 @@ mod tests {
         assert_eq!(kind("PermissionRequest", serde_json::json!({"tool_name":"Bash"})), Kind::Permission { tool: Some("Bash".into()) });
         assert_eq!(kind("Interrupt", serde_json::json!({})), Kind::Interrupt);
         assert_eq!(kind("SessionEnd", serde_json::json!({})), Kind::SessionEnd { reason: "other".into() });
+    }
+
+    #[test]
+    fn permission_request_waits_only_when_the_user_reviews_approvals() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = rollout(dir.path(), serde_json::json!({"originator":"codex-tui","source":"cli","thread_source":"user"}));
+        let context = |reviewer: &str| {
+            let mut f = fs::OpenOptions::new().append(true).open(&t).unwrap();
+            writeln!(f, "{}", serde_json::json!({"type":"turn_context","payload":{"turn_id":"t1","approval_policy":"on-request","approvals_reviewer":reviewer}})).unwrap();
+            // The turn goes on: the context ends up far from the end, across chunks.
+            for _ in 0..40 {
+                writeln!(f, "{}", serde_json::json!({"type":"event_msg","payload":{"type":"item_completed","text":"x".repeat(20 * 1024)}})).unwrap();
+            }
+        };
+        let kind = || {
+            let r = codex_rec("PermissionRequest", serde_json::json!({"session_id":"s-123456789","transcript_path":t,"turn_id":"t1","tool_name":"Bash"}));
+            event(normalize(&r, &Default::default())).kind
+        };
+        // No context written yet: the request is assumed to be the user's.
+        assert_eq!(kind(), Kind::Permission { tool: Some("Bash".into()) });
+        context("auto_review");
+        assert_eq!(approvals_reviewer(&t).as_deref(), Some("auto_review"));
+        assert_eq!(kind(), Kind::ToolActivity);
+        // Switched back to manual approval: the most recent context decides.
+        context("user");
+        assert_eq!(kind(), Kind::Permission { tool: Some("Bash".into()) });
     }
 
     #[test]

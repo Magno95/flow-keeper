@@ -1,7 +1,9 @@
 //! Desktop shell: starts the local service (collection + recap), the
 //! companion and panel windows, and the menu bar item.
 
+mod activity;
 mod commands;
+mod hover;
 mod service;
 mod updates;
 mod windows;
@@ -81,7 +83,11 @@ pub fn run() {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| "git".into());
             let conn = store::open(&paths.db)?;
-            let settings = settings::load(&conn)?;
+            let loaded = settings::load(&conn)?;
+            if let Some(reason) = &loaded.invalid {
+                log::error!("saved settings not used, summaries are off until they are saved again: {reason}");
+            }
+            let settings = loaded.settings;
             let mut tracker = Tracker::new(conn, Box::new(GitInspector::new(git)));
             tracker.normalize_options.track_print_sessions = settings.track_print_sessions;
 
@@ -103,6 +109,7 @@ pub fn run() {
             if settings.companion_visible {
                 windows::set_companion_visible(app.handle(), true);
             }
+            hover::track_companion(app.handle());
             windows::register_shortcut(app.handle(), &settings.shortcut);
             if !cfg!(debug_assertions) {
                 let autostart = app.autolaunch();
@@ -118,6 +125,7 @@ pub fn run() {
             }
             service::start(app.handle().clone());
             updates::start(app.handle().clone());
+            activity::start(app.handle().clone());
             Ok(())
         })
         .on_window_event(windows::on_window_event)
@@ -134,12 +142,15 @@ pub fn run() {
             commands::resume_conversation,
             commands::choose_folder_and_resume,
             commands::hide_conversation,
+            commands::hide_project,
             commands::unhide_conversation,
             commands::dismiss_attention,
             commands::mark_project_read,
             commands::rename_conversation,
             commands::move_conversation,
             commands::request_recap,
+            commands::get_usage,
+            commands::get_token_stats,
             commands::update_project,
             commands::set_project_excluded,
             commands::merge_projects,
@@ -166,6 +177,9 @@ pub fn run() {
             commands::install_update,
             commands::open_updates,
             commands::set_companion_headroom,
+            commands::get_activity,
+            commands::get_activity_status,
+            commands::sync_activity,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start the app")

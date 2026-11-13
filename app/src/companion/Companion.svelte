@@ -73,6 +73,7 @@
         gaze = null;
         panelOpen = false;
       }),
+      listen("tracker://companion-hover", enter),
       listen("tracker://turn-finished", () => {
         if (!panelOpen) unseenFinish = true;
         finishedTick++;
@@ -108,8 +109,10 @@
     winkTick++;
     lastWinkAt = Date.now();
   }
+  // Hover arrives from the webview and, while another app is active, from
+  // the backend: when both arrive, only the first one counts.
   function enter() {
-    if (!start) wink();
+    if (!start && Date.now() - lastWinkAt > 900) wink();
   }
   function open() {
     if (Date.now() - lastWinkAt > 900) wink();

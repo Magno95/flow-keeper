@@ -1,8 +1,9 @@
 <script lang="ts">
   import { api } from "../lib/api";
-  import { ago, dateTime } from "../lib/format";
+  import { ago, dateTime, tokens } from "../lib/format";
+  import Icon from "../lib/Icon.svelte";
   import { primaryAction, removeFromView, restore, ui } from "../lib/ui.svelte";
-  import type { ConversationCard } from "../lib/types";
+  import type { ConversationCard, Usage } from "../lib/types";
   import Menu, { type MenuItem } from "./Menu.svelte";
   import StatusPill from "./StatusPill.svelte";
 
@@ -12,6 +13,27 @@
     highlight,
   }: { card: ConversationCard; projectName?: string | null; highlight?: boolean } = $props();
   let expanded = $state(false);
+  let usage = $state<Usage | null | "loading" | "error">("loading");
+
+  // Tokens read from the transcript each time the details are opened.
+  function toggle() {
+    expanded = !expanded;
+    if (!expanded) return;
+    usage = "loading";
+    api.usage(card.id).then(
+      (u) => (usage = u),
+      () => (usage = "error"),
+    );
+  }
+  const usageText = $derived.by(() => {
+    if (usage === "loading") return "reading the transcript…";
+    if (usage === "error") return "not available";
+    if (usage === null) return "after the first reply";
+    const t = usage.tokens;
+    const total = t.input + t.cacheWrite + t.cacheRead + t.output;
+    const text = `${tokens(total)} total · ${tokens(t.output)} output · ${usage.requests.toLocaleString("en-US")} ${usage.requests === 1 ? "response" : "responses"}`;
+    return usage.fromHistory ? `${text} (saved, the transcript is gone)` : text;
+  });
 
   const placeholder = $derived.by(() => {
     if (card.summary) return null;
@@ -51,6 +73,7 @@
           { label: "Edit title", run: () => (ui.dialog = { kind: "rename", card }) },
           { label: "Move to another project", run: () => (ui.dialog = { kind: "move", card }) },
           { label: "Update summary", run: () => api.requestRecap(card.id) },
+          { label: "Analytics", hint: "Tokens used so far", run: () => (ui.dialog = { kind: "analytics", card }) },
           {
             label: "Remove from view",
             hint: "Doesn't close the agent. It reappears if activity resumes.",
@@ -69,7 +92,7 @@
     </time>
   </header>
 
-  <button class="body" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
+  <button class="body" aria-expanded={expanded} onclick={toggle}>
     <h3 class:provisional={card.titleIsProvisional}>{card.title}</h3>
     {#if card.summary}
       <p class="summary">{card.summary}</p>
@@ -87,10 +110,20 @@
       {#if card.stateReason && card.state !== "waiting"}
         <div><dt>Status</dt><dd>{card.stateReason}</dd></div>
       {/if}
+      <div><dt>Started</dt><dd>{dateTime(card.startedAt)}</dd></div>
       <div><dt>Last activity</dt><dd>{dateTime(card.lastActivityAt)}</dd></div>
       <div>
         <dt>Summary</dt>
         <dd>{card.summaryAt ? `updated ${dateTime(card.summaryAt)}` : "not generated yet"}</dd>
+      </div>
+      <div>
+        <dt>Tokens</dt>
+        <dd>
+          {usageText}
+          {#if usage && typeof usage === "object"}
+            <button class="link" onclick={() => (ui.dialog = { kind: "analytics", card })}>Details</button>
+          {/if}
+        </dd>
       </div>
       <div>
         <dt>Environment</dt>
@@ -120,6 +153,16 @@
         <button class="btn small" disabled={ui.busy[card.id]} onclick={() => primaryAction(card)}>{primary}</button>
       {/if}
       <Menu {items} label={`More actions for ${card.title}`} />
+      {#if !card.hidden}
+        <button
+          class="icon-btn"
+          aria-label={`Remove ${card.title} from view`}
+          title="Remove from view (doesn't close the agent)"
+          onclick={() => removeFromView(card)}
+        >
+          <Icon name="close" size={14} />
+        </button>
+      {/if}
     </span>
   </footer>
 </article>
@@ -220,6 +263,15 @@
   dd {
     margin: 0;
     color: var(--text-2);
+  }
+  .link {
+    border: 0;
+    background: transparent;
+    padding: 0 0 0 6px;
+    color: var(--text);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
   footer {
     display: flex;

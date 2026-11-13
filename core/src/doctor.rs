@@ -77,77 +77,80 @@ pub fn detect(path_env: &str) -> Environment {
 pub fn checks(conn: &Connection, paths: &Paths, env: &Environment, settings: &Settings, now: i64) -> Result<Vec<Check>> {
     let mut out = Vec::new();
 
-    out.push(match (&env.claude_path, &env.claude_version) {
-        (None, _) => Check {
-            id: "claude",
-            label: "Claude Code".into(),
-            level: Level::Error,
-            detail: "Claude Code is not installed or cannot be reached.".into(),
-            advanced: None,
-        },
-        (Some(path), version) => {
-            let v = version.clone().unwrap_or_else(|| "unknown".into());
-            let tested = system::TESTED_CLAUDE_VERSIONS.contains(&v.as_str());
-            Check {
+    if env.claude_path.is_some() || env.codex_path.is_none() {
+        out.push(match (&env.claude_path, &env.claude_version) {
+            (None, _) => Check {
                 id: "claude",
                 label: "Claude Code".into(),
-                level: if tested { Level::Ok } else { Level::Warn },
-                detail: if tested {
-                    format!("Version {v}, verified.")
-                } else {
-                    format!("Version {v}: not yet verified with Flow Keeper. States may be incomplete.")
-                },
-                advanced: Some(format!("executable: {path}; verified versions: {}", system::TESTED_CLAUDE_VERSIONS.join(", "))),
+                level: Level::Error,
+                detail: "Claude Code is not installed or cannot be reached.".into(),
+                advanced: None,
+            },
+            (Some(path), version) => {
+                let v = version.clone().unwrap_or_else(|| "unknown".into());
+                let tested = system::TESTED_CLAUDE_VERSIONS.contains(&v.as_str());
+                Check {
+                    id: "claude",
+                    label: "Claude Code".into(),
+                    level: if tested { Level::Ok } else { Level::Warn },
+                    detail: if tested {
+                        format!("Version {v}, verified.")
+                    } else {
+                        format!("Version {v}: not yet verified with Flow Keeper. States may be incomplete.")
+                    },
+                    advanced: Some(format!("executable: {path}; verified versions: {}", system::TESTED_CLAUDE_VERSIONS.join(", "))),
+                }
             }
-        }
-    });
+        });
 
-    let plugin_info = |p: &PluginStatus| {
-        format!(
-            "plugin {} {}{}; hooks in {}",
-            p.id.clone().unwrap_or_default(),
-            p.version.clone().unwrap_or_default(),
-            if p.managed { " (managed by the app)" } else { " (installed by hand)" },
-            p.install_path.clone().unwrap_or_default()
-        )
-    };
-    out.push(match &env.plugin {
-        Some(p) if p.installed && p.enabled && (p.up_to_date || !p.managed) => Check {
-            id: "plugin",
-            label: "Claude Code connection".into(),
-            level: Level::Ok,
-            detail: "Active.".into(),
-            advanced: Some(plugin_info(p)),
-        },
-        Some(p) if p.installed && p.enabled => Check {
-            id: "plugin",
-            label: "Claude Code connection".into(),
-            level: Level::Warn,
-            detail: "Active, but needs an update: use “Connect your agents”.".into(),
-            advanced: Some(plugin_info(p)),
-        },
-        Some(p) if p.installed => Check {
-            id: "plugin",
-            label: "Claude Code connection".into(),
-            level: Level::Error,
-            detail: "Disabled in Claude Code.".into(),
-            advanced: Some(format!("claude plugin enable {}", p.id.clone().unwrap_or_default())),
-        },
-        Some(_) => Check {
-            id: "plugin",
-            label: "Claude Code connection".into(),
-            level: Level::Error,
-            detail: "Not connected yet: use “Connect your agents”.".into(),
-            advanced: None,
-        },
-        None => Check {
-            id: "plugin",
-            label: "Claude Code connection".into(),
-            level: Level::Warn,
-            detail: "Could not verify it.".into(),
-            advanced: None,
-        },
-    });
+        let plugin_info = |p: &PluginStatus| {
+            format!(
+                "plugin {} {}{}; hooks in {}",
+                p.id.clone().unwrap_or_default(),
+                p.version.clone().unwrap_or_default(),
+                if p.managed { " (managed by the app)" } else { " (installed by hand)" },
+                p.install_path.clone().unwrap_or_default()
+            )
+        };
+        out.push(match &env.plugin {
+            Some(p) if p.installed && p.enabled && (p.up_to_date || !p.managed) => Check {
+                id: "plugin",
+                label: "Claude Code connection".into(),
+                level: Level::Ok,
+                detail: "Active.".into(),
+                advanced: Some(plugin_info(p)),
+            },
+            Some(p) if p.installed && p.enabled => Check {
+                id: "plugin",
+                label: "Claude Code connection".into(),
+                level: Level::Warn,
+                detail: "Active, but needs an update: use “Connect your agents”.".into(),
+                advanced: Some(plugin_info(p)),
+            },
+            Some(p) if p.installed => Check {
+                id: "plugin",
+                label: "Claude Code connection".into(),
+                level: Level::Error,
+                detail: "Disabled in Claude Code.".into(),
+                advanced: Some(format!("claude plugin enable {}", p.id.clone().unwrap_or_default())),
+            },
+            Some(_) => Check {
+                id: "plugin",
+                label: "Claude Code connection".into(),
+                level: Level::Error,
+                detail: "Not connected yet: use “Connect your agents”.".into(),
+                advanced: None,
+            },
+            None => Check {
+                id: "plugin",
+                label: "Claude Code connection".into(),
+                level: Level::Warn,
+                detail: "Could not verify it.".into(),
+                advanced: None,
+            },
+        });
+
+    }
 
     // Codex is optional: its checks only appear when it is installed.
     if let Some(path) = &env.codex_path {
@@ -200,6 +203,10 @@ pub fn checks(conn: &Connection, paths: &Paths, env: &Environment, settings: &Se
         .ok()
         .flatten();
     let (level, detail) = match settings.recap_provider {
+        RecapProviderKind::Off if store::meta(conn, crate::settings::INVALID_META)?.is_some() => (
+            Level::Error,
+            "The saved settings could not be read, so summaries are off. Review and save the settings to turn them on again.".to_string(),
+        ),
         RecapProviderKind::Off => (Level::Warn, "AI summaries not set up: capture and states still work.".to_string()),
         RecapProviderKind::Api if !env.api_key_present => (Level::Error, "The API key is missing from the Keychain.".to_string()),
         RecapProviderKind::ClaudeCli if env.claude_path.is_none() => (Level::Error, "Claude Code is not available for summaries.".to_string()),
@@ -357,6 +364,25 @@ pub fn probe_received(conn: &Connection, nonce: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_only_does_not_require_claude_unless_used_for_summaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::at(dir.path());
+        paths.ensure().unwrap();
+        let conn = store::open(&paths.db).unwrap();
+        let env = Environment { codex_path: Some("/bin/codex".into()), ..Default::default() };
+        let mut settings = Settings::default();
+        settings.recap_provider = RecapProviderKind::Off;
+        let result = checks(&conn, &paths, &env, &settings, 0).unwrap();
+        assert!(!result.iter().any(|c| c.id == "claude" || c.id == "plugin"));
+        assert!(result.iter().any(|c| c.id == "codex"));
+        settings.recap_provider = RecapProviderKind::ClaudeCli;
+        let result = checks(&conn, &paths, &env, &settings, 0).unwrap();
+        assert!(result.iter().any(|c| c.id == "recap" && c.level == Level::Error));
+        let result = checks(&conn, &paths, &Environment::default(), &settings, 0).unwrap();
+        assert!(result.iter().any(|c| c.id == "claude" && c.level == Level::Error));
+    }
 
     #[test]
     fn codex_is_ready_only_when_current_hooks_are_enabled_and_trusted() {

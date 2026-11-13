@@ -65,6 +65,7 @@
     </ul>
   {/if}
 
+  {#if checks?.some((c) => c.id === "plugin" && c.level === "ok")}
   <section class="probe">
     <div>
       <strong>Guided test</strong>
@@ -74,6 +75,10 @@
     </div>
     <button class="btn small" disabled={probe === "running"} onclick={startProbe}>{probe === "running" ? "Running…" : "Start test"}</button>
   </section>
+
+  {:else}
+    <p class="muted">To test collection, start a new session with a connected agent and send a short message. Then choose “Check again”.</p>
+  {/if}
 
   <div class="foot">
     <button class="btn secondary small" onclick={run}>Check again</button>

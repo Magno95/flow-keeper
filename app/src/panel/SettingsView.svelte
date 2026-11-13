@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, onUpdate } from "../lib/api";
-  import { ago } from "../lib/format";
   import Icon from "../lib/Icon.svelte";
   import { failure, toast } from "../lib/ui.svelte";
-  import type { EditorStatus, Settings, UpdateState } from "../lib/types";
+  import { ago, plural } from "../lib/format";
+  import type { ActivityStatus, EditorStatus, Settings, UpdateState } from "../lib/types";
   import type { Route } from "./routes";
 
   let { go }: { go: (r: Route) => void } = $props();
@@ -92,18 +92,67 @@
     }
   }
 
+  // Last state accepted by the backend: what the page shows after a failure.
+  let confirmed: Settings | null = null;
+  let queue: Promise<void> = Promise.resolve();
+  let pending = 0;
+
   api.settings().then((v) => {
     s = v.settings;
+    confirmed = v.settings;
     keyPresent = v.apiKeyPresent;
   }, failure);
 
-  async function save(patch: Partial<Settings>) {
+  // Changes are shown at once but saved one after the other, each applied to
+  // the last confirmed state: a failed or slow save never brings back an old
+  // value, and the page ends up showing what was really saved.
+  function save(patch: Partial<Settings>) {
     if (!s) return;
     s = { ...s, ...patch };
+    pending++;
+    queue = queue.then(async () => {
+      try {
+        if (!confirmed) return;
+        const next = { ...confirmed, ...patch };
+        await api.saveSettings(next);
+        confirmed = next;
+      } catch (e) {
+        failure(e);
+      } finally {
+        pending--;
+        if (pending === 0 && confirmed) s = confirmed;
+      }
+    });
+  }
+
+  let activity = $state<ActivityStatus | null>(null);
+  let sending = $state(false);
+  api.activityStatus().then((v) => (activity = v), () => {});
+
+  const activityLine = $derived.by(() => {
+    if (!activity) return "";
+    const parts = [activity.pendingHours ? `${plural(activity.pendingHours, "hour", "hours")} waiting to be sent` : "Nothing waiting"];
+    parts.push(activity.lastSyncAt ? `last sent ${ago(activity.lastSyncAt)}` : "never sent");
+    return parts.join(" · ");
+  });
+
+  // An empty address also turns sending off: on without a server is not valid.
+  function saveEndpoint(value: string) {
+    const activityEndpoint = value.trim();
+    save(activityEndpoint ? { activityEndpoint } : { activityEndpoint, activitySync: false });
+  }
+
+  async function sendNow() {
+    sending = true;
     try {
-      await api.saveSettings(s);
+      await queue;
+      activity = await api.syncActivity();
+      toast("Activity sent to the server.");
     } catch (e) {
       failure(e);
+      activity = await api.activityStatus().catch(() => activity);
+    } finally {
+      sending = false;
     }
   }
 
@@ -136,6 +185,14 @@
               ? "Downloading and verifying the new bundle, then the app quits and reopens on its own."
               : `You have ${u.current}. The app quits, updates and reopens on its own; your data stays.`}
           </small>
+          {#each u.whatsNew.filter((r) => r.highlights.length) as r (r.version)}
+            <span class="release">
+              <b>What's new in {r.version}</b>
+              <ul>
+                {#each r.highlights as h, i (i)}<li>{h}</li>{/each}
+              </ul>
+            </span>
+          {/each}
         </span>
         <button class="btn small" disabled={u.installing || !!u.blocker} onclick={installUpdate}>
           {u.installing ? "Updating…" : "Update now"}
@@ -229,6 +286,29 @@
       <label class="toggle"><span>Launch at login</span><input type="checkbox" checked={s.launchAtLogin} onchange={(e) => save({ launchAtLogin: e.currentTarget.checked })} /></label>
       <label class="stack">Shortcut to open Flow Keeper<input class="field" value={s.shortcut} onchange={(e) => save({ shortcut: e.currentTarget.value })} /></label>
       <p class="note">Format like “Alt+Super+J” (⌥⌘J). Hiding FloK doesn't stop collection: the menu bar icon stays.</p>
+    </section>
+
+    <section>
+      <h2>Activity</h2>
+      <button class="row-btn" onclick={() => go({ name: "activity" })}>
+        <span><strong>See your activity</strong><small>Panel openings and conversations opened, by day and hour</small></span>
+        <Icon name="chevron" />
+      </button>
+      <label class="stack">Server address<input class="field" placeholder="https://…" value={s.activityEndpoint} onchange={(e) => saveEndpoint(e.currentTarget.value)} /></label>
+      <label class="stack">Token (optional)<input class="field" type="password" autocomplete="off" value={s.activityToken} onchange={(e) => save({ activityToken: e.currentTarget.value.trim() })} /></label>
+      <label class="toggle">
+        <span>Send activity to this server</span>
+        <input type="checkbox" checked={s.activitySync} disabled={!s.activityEndpoint} onchange={(e) => save({ activitySync: e.currentTarget.checked })} />
+      </label>
+      {#if s.activitySync && activity}
+        <button class="row-btn" disabled={sending} onclick={sendNow}>
+          <span><strong>{sending ? "Sending…" : "Send now"}</strong><small>{activityLine}</small></span>
+        </button>
+        {#if activity.lastError && activity.lastAttemptAt}
+          <p class="note error">Last attempt {ago(activity.lastAttemptAt)}: {activity.lastError}</p>
+        {/if}
+      {/if}
+      <p class="note">The server receives only, per hour, the two counts, the app version and a random ID of this installation. When it can't be reached (for example away from its network), the hours wait on this Mac and are sent at the next attempt.</p>
     </section>
 
     {#if !u?.available}{@render updates()}{/if}
@@ -350,8 +430,25 @@
   }
   .update {
     border: 1.5px solid var(--working);
+    align-items: flex-start;
   }
   .update .btn {
     flex: none;
+  }
+  .release {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .release b {
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .release ul {
+    margin: 2px 0 0;
+    padding-left: 18px;
+  }
+  .release li + li {
+    margin-top: 2px;
   }
 </style>

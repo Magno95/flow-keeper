@@ -3,5 +3,6 @@ export type Route =
   | { name: "project"; id: number | null }
   | { name: "removed" }
   | { name: "settings" }
+  | { name: "activity" }
   | { name: "doctor" }
   | { name: "onboarding" };

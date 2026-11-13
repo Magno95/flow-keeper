@@ -1,6 +1,6 @@
 {
   "name": "flow-keeper",
-  "version": "0.7.0",
+  "version": "0.15.0",
   "description": "Connects Codex CLI to Flow Keeper: records conversation start, turns, attention requests and closing, locally.",
   "author": { "name": "Davide Magnoni" },
   "repository": "https://github.com/Magno95/flow-keeper",

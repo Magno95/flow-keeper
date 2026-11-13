@@ -305,6 +305,53 @@ fn hide_during_activity_then_new_activity_brings_back_same_entry() {
 }
 
 #[test]
+fn hidden_project_comes_back_with_the_conversation_that_resumes() {
+    let mut w = World::new();
+    w.send("a", 100, "/src/shop", Kind::Prompt, T0);
+    w.send("b", 200, "/src/shop", Kind::Prompt, T0 + 1);
+    w.send("c", 300, "/src/blog", Kind::Prompt, T0 + 2);
+    let shop: Option<i64> =
+        w.t.conn.query_row("SELECT project_id FROM conversations WHERE id = ?1", [w.id("a")], |r| r.get(0)).unwrap();
+    let mut hidden = w.t.hide_project(shop, T0 + 10).unwrap();
+    hidden.sort();
+    assert_eq!(hidden, vec![w.id("a"), w.id("b")]);
+    let names = |w: &World, now| -> Vec<String> {
+        views::overview(&w.t.conn, now).unwrap().projects.into_iter().map(|p| p.name).collect()
+    };
+    assert_eq!(names(&w, T0 + 11), ["blog"]);
+
+    w.send("b", 200, "/src/shop", Kind::ToolActivity, T0 + 20);
+    assert_eq!(names(&w, T0 + 21).len(), 2);
+    assert_eq!(w.visible(T0 + 21), 2, "only the conversation that resumed");
+}
+
+#[test]
+fn old_events_are_pruned_and_the_conversation_keeps_its_state() {
+    use tracker_core::engine::KEEP_EVENTS_MS;
+    let mut w = World::new();
+    w.send("a", 100, "/src/shop", Kind::Prompt, T0);
+    w.send("a", 100, "/src/shop", Kind::Stop, T0 + 1);
+    let recent = T0 + KEEP_EVENTS_MS;
+    w.send("b", 200, "/src/blog", Kind::Prompt, recent);
+    let count = |w: &World, table: &str| -> i64 {
+        w.t.conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap()
+    };
+    assert_eq!(count(&w, "notifications"), 1);
+
+    let now = T0 + 1 + KEEP_EVENTS_MS + 1;
+    assert_eq!(w.t.prune_events(now).unwrap(), 3, "two events and the notification of \"a\"");
+    assert_eq!(count(&w, "events"), 1);
+    assert_eq!(count(&w, "notifications"), 0);
+    let state: String = w.t.conn.query_row("SELECT state FROM conversations WHERE id = ?1", [w.id("a")], |r| r.get(0)).unwrap();
+    assert_eq!(state, "turn_ended");
+
+    // Hiding still works without events.
+    w.t.hide(w.id("a"), now).unwrap();
+    let hidden_at: i64 = w.t.conn.query_row("SELECT hidden_at FROM conversations WHERE id = ?1", [w.id("a")], |r| r.get(0)).unwrap();
+    assert_eq!(hidden_at, now);
+}
+
+#[test]
 fn hidden_closed_conversation_ignores_old_events_scans_and_close_but_returns_on_resume() {
     let mut w = World::new();
     w.send("a", 100, "/src/shop", Kind::Prompt, T0);
@@ -450,4 +497,60 @@ fn ingest_from_spool_dir_end_to_end() {
     assert_eq!(c.title, "Fix the cart");
     assert!(c.title_is_provisional);
     assert_eq!(c.state, DisplayState::Working);
+}
+
+#[test]
+fn identical_prompts_in_distinct_turns_are_both_applied_and_a_reread_file_is_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, body: &str| std::fs::write(dir.path().join(name), body).unwrap();
+    let prompt = "flow-keeper-spool 1\nEVENT=UserPromptSubmit\nPID=4242\n\n{\"session_id\":\"s1\",\"cwd\":\"/src/shop\",\"prompt\":\"continue\"}";
+    let stop = "flow-keeper-spool 1\nEVENT=Stop\nPID=4242\n\n{\"session_id\":\"s1\",\"cwd\":\"/src/shop\"}";
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(5));
+    let mut w = World::new();
+    let now = tracker_core::now_ms();
+
+    write("1-10-claude-UserPromptSubmit.evt", prompt);
+    pause();
+    write("2-11-claude-Stop.evt", stop);
+    pause();
+    write("3-12-claude-UserPromptSubmit.evt", prompt);
+    let report = w.t.ingest_spool(dir.path(), now).unwrap();
+    assert_eq!((report.applied, report.duplicates), (3, 0));
+    assert_eq!(w.card("s1", now).state, DisplayState::Working);
+
+    // Crash between commit and removal: the same file shows up again.
+    write("3-12-claude-UserPromptSubmit.evt", prompt);
+    let report = w.t.ingest_spool(dir.path(), now).unwrap();
+    assert_eq!((report.applied, report.duplicates), (0, 1));
+}
+
+#[test]
+fn late_event_from_a_previous_instance_does_not_replace_the_current_one() {
+    let mut w = World::new();
+    w.send("a", 100, "/src/shop", Kind::Prompt, T0);
+    w.send("a", 200, "/src/shop", Kind::Prompt, T0 + 100);
+    let current = |w: &World| -> Option<i64> {
+        w.t.conn.query_row("SELECT current_instance_id FROM conversations WHERE native_id = 'a'", [], |r| r.get(0)).unwrap()
+    };
+    let pid_of = |w: &World, id: i64| -> i64 { w.t.conn.query_row("SELECT pid FROM instances WHERE id = ?1", [id], |r| r.get(0)).unwrap() };
+    assert_eq!(pid_of(&w, current(&w).unwrap()), 200);
+
+    let mut late = w.ev("a", 100, "/old", Kind::ToolActivity, T0 + 50);
+    late.transcript_path = Some("/t/old.jsonl".into());
+    w.t.apply(&late, T0 + 101).unwrap();
+    assert_eq!(pid_of(&w, current(&w).unwrap()), 200, "an obsolete event does not promote its instance");
+    let (cwd, transcript): (String, String) = w
+        .t
+        .conn
+        .query_row("SELECT cwd, transcript_path FROM conversations WHERE native_id = 'a'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!((cwd.as_str(), transcript.as_str()), ("/src/shop", "/t/a.jsonl"));
+
+    // The old instance is kept in the history and its end does not close the conversation.
+    w.t.sweep_liveness(T0 + 200, &|pid| Some(pid == 200)).unwrap();
+    assert_eq!(w.card("a", T0 + 201).state, DisplayState::Working);
+
+    // A later event from the old PID is a real return to it.
+    w.send("a", 100, "/src/shop", Kind::ToolActivity, T0 + 300);
+    assert_eq!(pid_of(&w, current(&w).unwrap()), 100);
 }

@@ -8,11 +8,14 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 use tracker_core::access::{self, AccessResult};
+use tracker_core::activity::{self, Counter, Hour, SyncStatus};
 use tracker_core::doctor::{self, Check};
 use tracker_core::settings::{self, Settings};
 use tracker_core::views::{self, CompanionState, ConversationCard, Overview, ProjectDetail, ProjectOption};
+use tracker_core::usage::{self, Usage};
 use tracker_core::{connect, editors, now_ms, recap, system};
 
+use crate::activity as activity_sync;
 use crate::service::{self, notify_changed};
 use crate::updates::{self, UpdateState};
 use crate::windows;
@@ -76,9 +79,15 @@ fn target(state: &AppState, id: i64) -> Res<access::Target> {
     access::target(&t.conn, id).map_err(err)?.ok_or_else(|| "conversation not found".to_string())
 }
 
-/// Going to the conversation counts as reading its result.
+/// Going to the conversation counts as reading its result, and as a use of
+/// the panel in the activity counters.
 fn mark_read(app: &AppHandle, state: &AppState, id: i64) -> Res<()> {
-    state.tracker.lock().map_err(err)?.mark_read(id).map_err(err)?;
+    let mut t = state.tracker.lock().map_err(err)?;
+    t.mark_read(id).map_err(err)?;
+    if let Err(e) = activity::record(&t.conn, Counter::ConversationOpen, now_ms()) {
+        log::warn!("activity not recorded: {e}");
+    }
+    drop(t);
     notify_changed(app);
     Ok(())
 }
@@ -123,6 +132,13 @@ pub async fn hide_conversation(app: AppHandle, state: State<'_, AppState>, id: i
     state.tracker.lock().map_err(err)?.hide(id, now_ms()).map_err(err)?;
     notify_changed(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn hide_project(app: AppHandle, state: State<'_, AppState>, id: Option<i64>) -> Res<Vec<i64>> {
+    let ids = state.tracker.lock().map_err(err)?.hide_project(id, now_ms()).map_err(err)?;
+    notify_changed(&app);
+    Ok(ids)
 }
 
 #[tauri::command]
@@ -190,6 +206,44 @@ pub async fn request_recap(app: AppHandle, state: State<'_, AppState>, id: i64) 
     Ok(())
 }
 
+/// Token usage of a conversation: read again from the transcript, outside
+/// the store lock (large transcripts take a few tens of milliseconds), and
+/// saved. When the agent has deleted the transcript, the saved one.
+#[tauri::command]
+pub async fn get_usage(state: State<'_, AppState>, id: i64) -> Res<Option<Usage>> {
+    let found = usage::transcript_of(&state.tracker.lock().map_err(err)?.conn, id).map_err(err)?;
+    let has_transcript = found.is_some();
+    let read = match found {
+        Some((tool, path)) => {
+            tauri::async_runtime::spawn_blocking(move || usage::read(&tool, &path).ok()).await.map_err(err)?
+        }
+        None => None,
+    };
+    let t = state.tracker.lock().map_err(err)?;
+    if read.is_some() {
+        usage::save(&t.conn, id, read.as_ref(), now_ms()).map_err(err)?;
+    }
+    match usage::saved(&t.conn, id).map_err(err)? {
+        Some(u) => Ok(Some(Usage { from_history: read.is_none(), ..u })),
+        // A transcript without responses yet.
+        None if read.is_some() => Ok(Some(Usage::default())),
+        None if has_transcript => Err("The transcript of this conversation can't be read.".into()),
+        None => Ok(None),
+    }
+}
+
+/// Tokens of all conversations from `since` (ms; none = everything saved),
+/// with the period from `previous_since` to `previous_until` (none = `since`) for the comparison.
+#[tauri::command]
+pub async fn get_token_stats(
+    state: State<'_, AppState>,
+    since: Option<i64>,
+    previous_since: Option<i64>,
+    previous_until: Option<i64>,
+) -> Res<usage::Stats> {
+    usage::stats(&state.tracker.lock().map_err(err)?.conn, since, previous_since, previous_until).map_err(err)
+}
+
 #[tauri::command]
 pub async fn update_project(
     app: AppHandle,
@@ -232,11 +286,26 @@ pub async fn get_settings(state: State<'_, AppState>) -> Res<SettingsView> {
 }
 
 #[tauri::command]
-pub async fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> Res<()> {
+pub async fn save_settings(app: AppHandle, state: State<'_, AppState>, mut settings: Settings) -> Res<()> {
+    settings.validate()?;
+    windows::parse_shortcut(&settings.shortcut)?;
     let previous = state.settings();
+    let activity_changed = !settings.same_activity_server(&previous);
+    // A server chosen (or turned off) by the user replaces the build's for good.
+    settings.activity_custom |= activity_changed;
+    // The new shortcut first: if it cannot be registered nothing is saved and the old one keeps working.
+    if previous.shortcut != settings.shortcut {
+        windows::switch_shortcut(&app, &previous.shortcut, &settings.shortcut)?;
+    }
     {
         let mut t = state.tracker.lock().map_err(err)?;
-        settings::save(&t.conn, &settings).map_err(err)?;
+        if let Err(e) = settings::save(&t.conn, &settings) {
+            drop(t);
+            if previous.shortcut != settings.shortcut {
+                let _ = windows::switch_shortcut(&app, &settings.shortcut, &previous.shortcut);
+            }
+            return Err(err(e));
+        }
         t.normalize_options.track_print_sessions = settings.track_print_sessions;
         if previous.recap_provider != settings.recap_provider
             || previous.recap_daily_limit != settings.recap_daily_limit
@@ -244,14 +313,16 @@ pub async fn save_settings(app: AppHandle, state: State<'_, AppState>, settings:
         {
             recap::reschedule_blocked(&t.conn, now_ms()).map_err(err)?;
         }
+        // Changed under the tracker lock, like the stored copy: a summary step that
+        // takes the lock afterwards sees the new preferences, never the old ones.
+        *state.settings.lock().map_err(err)? = settings.clone();
     }
-    *state.settings.lock().map_err(err)? = settings.clone();
+    if activity_changed {
+        activity_sync::reschedule();
+    }
     let a = app.clone();
     let s = settings.clone();
     app.run_on_main_thread(move || {
-        if previous.shortcut != s.shortcut {
-            windows::register_shortcut(&a, &s.shortcut);
-        }
         windows::set_companion_visible(&a, s.companion_visible);
     })
     .map_err(err)?;
@@ -292,6 +363,8 @@ pub struct SetupState {
     /// Connected, but the hooks still need approval in Codex with `/hooks`.
     pub codex_hooks_pending: bool,
     pub conversations_seen: i64,
+    pub claude_conversations_seen: i64,
+    pub codex_conversations_seen: i64,
     pub onboarding_done: bool,
 }
 
@@ -300,6 +373,10 @@ fn setup_state(state: &AppState) -> Res<SetupState> {
     let seen: i64 = {
         let t = state.tracker.lock().map_err(err)?;
         t.conn.query_row("SELECT count(*) FROM conversations", [], |r| r.get(0)).map_err(err)?
+    };
+    let (claude_seen, codex_seen): (i64, i64) = {
+        let t = state.tracker.lock().map_err(err)?;
+        t.conn.query_row("SELECT count(CASE WHEN tool = 'claude' THEN 1 END), count(CASE WHEN tool = 'codex' THEN 1 END) FROM conversations", [], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?
     };
     let s = state.settings();
     Ok(match env {
@@ -319,6 +396,8 @@ fn setup_state(state: &AppState) -> Res<SetupState> {
             codex_plugin_managed: false,
             codex_hooks_pending: false,
             conversations_seen: seen,
+            claude_conversations_seen: claude_seen,
+            codex_conversations_seen: codex_seen,
             onboarding_done: s.onboarding_done,
         },
         Some(env) => SetupState {
@@ -337,6 +416,8 @@ fn setup_state(state: &AppState) -> Res<SetupState> {
             codex_hooks_pending: env.codex_plugin.as_ref().is_some_and(|p| p.needs_review()),
             codex_version: env.codex_version,
             conversations_seen: seen,
+            claude_conversations_seen: claude_seen,
+            codex_conversations_seen: codex_seen,
             onboarding_done: s.onboarding_done,
         },
     })
@@ -486,4 +567,36 @@ pub async fn open_updates(app: AppHandle) -> Res<()> {
 pub async fn set_companion_headroom(app: AppHandle, extra: f64) -> Res<()> {
     let a = app.clone();
     app.run_on_main_thread(move || windows::set_companion_headroom(&a, extra)).map_err(err)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityView {
+    pub hours: Vec<Hour>,
+    /// First hour counted on this Mac, `None` before any use.
+    pub since: Option<i64>,
+}
+
+/// Use counters from `since` (ms), for the Activity view.
+#[tauri::command]
+pub async fn get_activity(state: State<'_, AppState>, since: i64) -> Res<ActivityView> {
+    let t = state.tracker.lock().map_err(err)?;
+    Ok(ActivityView {
+        hours: activity::hours(&t.conn, since.max(0)).map_err(err)?,
+        since: activity::first_hour(&t.conn).map_err(err)?,
+    })
+}
+
+#[tauri::command]
+pub async fn get_activity_status(state: State<'_, AppState>) -> Res<SyncStatus> {
+    activity::status(&state.tracker.lock().map_err(err)?.conn).map_err(err)
+}
+
+/// “Send now”: sends the pending hours, or only checks the server when there are none.
+#[tauri::command]
+pub async fn sync_activity(app: AppHandle, state: State<'_, AppState>) -> Res<SyncStatus> {
+    let a = app.clone();
+    let sent = tauri::async_runtime::spawn_blocking(move || activity_sync::sync(&a)).await.map_err(err)?;
+    let status = activity::status(&state.tracker.lock().map_err(err)?.conn).map_err(err)?;
+    sent.map(|_| status).map_err(err)
 }

@@ -2,12 +2,13 @@
 //! while updating; the panel opens next to the companion while staying
 //! inside the visible area of the current monitor.
 
+use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Monitor, Window, WindowEvent};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tracker_core::store;
 
 use crate::AppState;
@@ -17,6 +18,7 @@ pub const PANEL: &str = "panel";
 pub const EVENT_NAVIGATE: &str = "tracker://navigate";
 pub const EVENT_PANEL_OPENED: &str = "tracker://panel-opened";
 pub const EVENT_PANEL_CLOSED: &str = "tracker://panel-closed";
+pub const EVENT_COMPANION_HOVER: &str = "tracker://companion-hover";
 
 /// Direction the companion looks toward the panel.
 #[derive(Clone, serde::Serialize)]
@@ -77,9 +79,10 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 let visible = app.get_webview_window(COMPANION).and_then(|w| w.is_visible().ok()).unwrap_or(false);
                 set_companion_visible(app, !visible);
                 let state = app.state::<AppState>();
+                // Same order as everywhere else: tracker first, then the settings.
+                let tracker = state.tracker.lock().expect("tracker");
                 let mut s = state.settings.lock().expect("settings");
                 s.companion_visible = !visible;
-                let tracker = state.tracker.lock().expect("tracker");
                 let _ = tracker_core::settings::save(&tracker.conn, &s);
             }
             "doctor" => {
@@ -98,20 +101,53 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+fn on_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent) {
+    if event.state == ShortcutState::Pressed {
+        toggle_panel(app);
+    }
+}
+
+/// Registers the shortcut at startup (nothing else is registered yet).
 pub fn register_shortcut(app: &AppHandle, shortcut: &str) {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
     if shortcut.trim().is_empty() {
         return;
     }
-    let result = gs.on_shortcut(shortcut, |app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            toggle_panel(app);
-        }
-    });
-    if let Err(err) = result {
+    if let Err(err) = gs.on_shortcut(shortcut, on_shortcut) {
         log::warn!("shortcut not registered ({shortcut}): {err}");
     }
+}
+
+/// Syntax check of an accelerator, with the same parser the registration uses.
+pub fn parse_shortcut(shortcut: &str) -> Result<Shortcut, String> {
+    Shortcut::from_str(shortcut.trim()).map_err(|e| format!("The shortcut “{shortcut}” is not valid: {e}"))
+}
+
+/// Replaces the registered shortcut. The new one is registered first: if that
+/// fails (invalid, or taken by another app) the previous one stays active and
+/// the error is returned. Runs on the main thread, as Tauri requires.
+pub fn switch_shortcut(app: &AppHandle, old: &str, new: &str) -> Result<(), String> {
+    let wanted = parse_shortcut(new)?;
+    let previous = Shortcut::from_str(old.trim()).ok();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let gs = handle.global_shortcut();
+        let result = (|| {
+            if previous.as_ref() != Some(&wanted) {
+                gs.on_shortcut(wanted, on_shortcut)
+                    .map_err(|e| format!("The shortcut could not be registered: {e}"))?;
+                if let Some(previous) = previous {
+                    let _ = gs.unregister(previous);
+                }
+            }
+            Ok(())
+        })();
+        let _ = tx.send(result);
+    })
+    .map_err(|e| e.to_string())?;
+    rx.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_| "The shortcut could not be registered in time.".to_string())?
 }
 
 pub fn set_companion_visible(app: &AppHandle, visible: bool) {
@@ -185,6 +221,10 @@ pub fn toggle_panel(app: &AppHandle) {
 
 pub fn show_panel(app: &AppHandle) {
     let Some(panel) = app.get_webview_window(PANEL) else { return };
+    // Brought to the front while already open (navigation, second launch) is not a new opening.
+    if !panel.is_visible().unwrap_or(false) {
+        crate::activity::record(app, tracker_core::activity::Counter::PanelOpen);
+    }
     let gaze = position_panel(app);
     let _ = panel.show();
     let _ = panel.set_focus();
@@ -263,5 +303,20 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_shortcut;
+
+    #[test]
+    fn the_default_shortcut_parses_and_nonsense_does_not() {
+        let default = tracker_core::settings::Settings::default().shortcut;
+        assert!(parse_shortcut(&default).is_ok(), "{default}");
+        assert!(parse_shortcut("CmdOrCtrl+Shift+K").is_ok());
+        for bad in ["DefinitelyNotAKey", "Alt+", "+", "Alt+Super", "A B C"] {
+            assert!(parse_shortcut(bad).is_err(), "{bad}");
+        }
     }
 }

@@ -22,6 +22,8 @@
   --neutral: #6b6b67;
   --neutral-bg: #efefec;
   --danger: #b42318;
+  /* Data in the Activity charts (one series, sequential). */
+  --chart: #5b57d1;
 
   --radius-lg: 18px;
   --radius-md: 14px;
@@ -52,6 +54,7 @@
     --neutral: #a8a8a4;
     --neutral-bg: #2c2c2a;
     --danger: #ff8a80;
+    --chart: #8480e6;
   }
 }
 

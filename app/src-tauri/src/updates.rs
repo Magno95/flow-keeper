@@ -25,6 +25,8 @@ const FIRST_CHECK_AFTER: Duration = Duration::from_secs(20);
 const TICK: Duration = Duration::from_secs(60);
 /// Version whose speech bubble has already been seen (click on the companion).
 const META_DISMISSED: &str = "update_dismissed";
+/// Releases recapped in the update box.
+const MAX_WHATS_NEW: usize = 5;
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +43,15 @@ pub struct UpdateState {
     pub error: Option<String>,
     /// Why the app can't update itself (dev build, protected folder).
     pub blocker: Option<String>,
+    /// The releases after the installed one, newest first.
+    pub whats_new: Vec<ReleaseNotes>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseNotes {
+    pub version: String,
+    pub highlights: Vec<String>,
 }
 
 #[derive(Default)]
@@ -106,7 +117,7 @@ pub fn check(app: &AppHandle) -> UpdateState {
     emit(app);
     let result = system::which("gh", &state.path_env)
         .ok_or_else(|| "GitHub CLI is required: brew install gh && gh auth login".to_string())
-        .and_then(|gh| updates::latest(&gh, &state.path_env, &updates::repo()).map_err(|e| e.to_string()));
+        .and_then(|gh| updates::releases(&gh, &state.path_env, &updates::repo()).map_err(|e| e.to_string()));
     let dismissed = {
         let tracker = state.tracker.lock().expect("tracker");
         store::meta(&tracker.conn, META_DISMISSED).ok().flatten()
@@ -115,12 +126,19 @@ pub fn check(app: &AppHandle) -> UpdateState {
     s.checking = false;
     s.checked_at = Some(now_ms());
     match result {
-        Ok(release) => {
+        Ok(releases) => {
+            let release = releases.first().cloned();
             s.error = None;
             s.available = release.as_ref().is_some_and(|r| updates::is_newer(&r.version, &s.current));
             s.latest = release.as_ref().map(|r| r.version.clone());
             s.url = release.as_ref().map(|r| r.url.clone());
             s.announce = s.available && dismissed.as_deref() != s.latest.as_deref();
+            s.whats_new = releases
+                .iter()
+                .filter(|r| updates::is_newer(&r.version, &s.current))
+                .take(MAX_WHATS_NEW)
+                .map(|r| ReleaseNotes { version: r.version.clone(), highlights: r.highlights.clone() })
+                .collect();
             if s.available {
                 log::info!("update available: {} → {}", s.current, s.latest.as_deref().unwrap_or("?"));
             }

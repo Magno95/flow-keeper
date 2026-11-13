@@ -18,3 +18,5 @@ docs/
 *.db
 .aws/
 .codex/
+/dist/
+code-review*

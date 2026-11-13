@@ -3,7 +3,7 @@
   import Icon from "../lib/Icon.svelte";
   import Robot from "../lib/Robot.svelte";
   import { plural, stableOrder } from "../lib/format";
-  import { failure, primaryAction } from "../lib/ui.svelte";
+  import { failure, primaryAction, removeProjectFromView } from "../lib/ui.svelte";
   import type { ConversationCard, Overview, SetupState } from "../lib/types";
   import ConversationCardView from "./ConversationCard.svelte";
   import ProjectCardView from "./ProjectCard.svelte";
@@ -17,11 +17,13 @@
   let query = $state("");
   let results = $state<ConversationCard[] | null>(null);
   let lastOpened = -1;
+  // The project card dragged open on its remove button: one at a time.
+  let revealed = $state<number | string | null>(null);
 
   const key = (id: number | null) => id ?? "unassigned";
   const projects = $derived(data ? stableOrder(data.projects, (p) => key(p.id), order) : []);
   const names = $derived(new Map(data?.projects.map((p) => [p.id, p.name]) ?? []));
-  const disconnected = $derived(setup?.detected && (!setup.claudeFound || !setup.pluginEnabled));
+  const disconnected = $derived(setup?.detected && !(setup.pluginEnabled || (setup.codexPluginEnabled && !setup.codexHooksPending)));
 
   async function load() {
     try {
@@ -82,7 +84,10 @@
       </p>
     {/if}
   </div>
-  <button class="icon-btn" aria-label="Settings" onclick={() => go({ name: "settings" })}><Icon name="settings" /></button>
+  <div class="top-actions">
+    <button class="icon-btn" aria-label="Analytics" title="Analytics: tokens and app use" onclick={() => go({ name: "activity" })}><Icon name="chart" /></button>
+    <button class="icon-btn" aria-label="Settings" onclick={() => go({ name: "settings" })}><Icon name="settings" /></button>
+  </div>
 </header>
 
 <div class="search">
@@ -101,7 +106,7 @@
     <section class="banner">
       <div>
         <strong>Connect your agents</strong>
-        <p>{setup?.claudeFound ? "Claude Code isn't connected to Flow Keeper yet." : "Can't find Claude Code on this Mac."}</p>
+        <p>No agent is ready yet. Connect Claude Code or Codex to start collecting conversations.</p>
       </div>
       <button class="btn small" onclick={() => go({ name: "onboarding" })}>Connect</button>
     </section>
@@ -141,7 +146,16 @@
     {#if projects.length}
       <section class="list" aria-label="Projects">
         {#each projects as project (key(project.id))}
-          <ProjectCardView {project} onopen={() => go({ name: "project", id: project.id })} />
+          <ProjectCardView
+            {project}
+            onopen={() => go({ name: "project", id: project.id })}
+            onremove={() => {
+              revealed = null;
+              removeProjectFromView(project.id, load);
+            }}
+            revealed={revealed === key(project.id)}
+            onreveal={(open) => (revealed = open ? key(project.id) : null)}
+          />
         {/each}
       </section>
     {:else}
@@ -176,6 +190,10 @@
     font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.02em;
+  }
+  .top-actions {
+    display: flex;
+    gap: 2px;
   }
   .sub {
     margin: 2px 0 0;

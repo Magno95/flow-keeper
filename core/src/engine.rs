@@ -15,6 +15,10 @@ use crate::store;
 pub const RECAP_DEBOUNCE_MS: i64 = 60_000;
 /// Events older than this when ingested do not trigger notifications.
 pub const NOTIFY_MAX_DELAY_MS: i64 = 5 * 60_000;
+/// Events and notifications kept after ingestion. Events only serve to
+/// recognize a spool file read again after a crash, which happens within
+/// seconds; the conversations keep their state without them.
+pub const KEEP_EVENTS_MS: i64 = 30 * 24 * 3_600_000;
 
 pub mod state {
     pub const RUNNING: &str = "running";
@@ -164,7 +168,10 @@ impl Tracker {
         let mut recap_due: Option<i64> = None;
         let mut effect = String::new();
 
-        if !matches!(e.kind, Kind::SessionEnd { .. }) {
+        // Only an event that is not older than the conversation can promote its
+        // instance: a late event from a previous instance must not become current.
+        // With no current instance there is nothing to preserve.
+        if !matches!(e.kind, Kind::SessionEnd { .. }) && (!stale || conv.current_instance_id.is_none()) {
             if let Some(inst) = instance {
                 if conv.current_instance_id != Some(inst) {
                     tx.execute("UPDATE conversations SET current_instance_id = ?1 WHERE id = ?2", params![inst, conv.id])?;
@@ -280,13 +287,19 @@ impl Tracker {
             )?;
         }
 
+        // An obsolete event does not bring location metadata back to an earlier
+        // version; it only fills what is still missing.
         if let Some(cwd) = &e.cwd {
-            tx.execute("UPDATE conversations SET cwd = ?1 WHERE id = ?2 AND cwd IS NOT ?1", params![cwd, conv.id])?;
+            tx.execute(
+                "UPDATE conversations SET cwd = ?1 WHERE id = ?2 AND cwd IS NOT ?1 AND (?3 OR cwd IS NULL)",
+                params![cwd, conv.id, !stale],
+            )?;
         }
         if let Some(tp) = &e.transcript_path {
             tx.execute(
-                "UPDATE conversations SET transcript_path = ?1 WHERE id = ?2 AND transcript_path IS NOT ?1",
-                params![tp, conv.id],
+                "UPDATE conversations SET transcript_path = ?1 WHERE id = ?2 AND transcript_path IS NOT ?1
+                   AND (?3 OR transcript_path IS NULL)",
+                params![tp, conv.id, !stale],
             )?;
         }
         if conv.provisional_title.is_none() {
@@ -366,6 +379,17 @@ impl Tracker {
         Ok(changed)
     }
 
+    /// Deletes events and notifications older than `KEEP_EVENTS_MS`, so the
+    /// database stops growing; SQLite reuses the freed pages.
+    pub fn prune_events(&mut self, now: i64) -> Result<usize> {
+        let cutoff = now - KEEP_EVENTS_MS;
+        let tx = self.conn.transaction()?;
+        let events = tx.execute("DELETE FROM events WHERE ingested_at < ?1", [cutoff])?;
+        let notifications = tx.execute("DELETE FROM notifications WHERE created_at < ?1", [cutoff])?;
+        tx.commit()?;
+        Ok(events + notifications)
+    }
+
     pub fn live_pids(&self) -> Result<Vec<i64>> {
         let mut stmt = self
             .conn
@@ -385,6 +409,20 @@ impl Tracker {
         self.conn
             .execute("UPDATE conversations SET hidden = 1, hidden_at = ?1 WHERE id = ?2", params![point, id])?;
         Ok(())
+    }
+
+    /// Remove a whole project from view: each visible conversation is hidden
+    /// and comes back on its own when its activity resumes. Returns them for Undo.
+    pub fn hide_project(&mut self, project_id: Option<i64>, now: i64) -> Result<Vec<i64>> {
+        let ids: Vec<i64> = self
+            .conn
+            .prepare("SELECT id FROM conversations WHERE hidden = 0 AND project_id IS ?1")?
+            .query_map([project_id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        for &id in &ids {
+            self.hide(id, now)?;
+        }
+        Ok(ids)
     }
 
     /// Manual restore (Undo or the Removed filter).

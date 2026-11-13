@@ -15,6 +15,7 @@
     restore: "M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4",
     terminal: "M4 5h16v14H4zM8 10l3 2-3 2m5 1h3",
     copy: "M9 9h10v10H9zM5 15V5h10",
+    chart: "M5 20V11M12 20V5M19 20v-6",
   };
 </script>
 

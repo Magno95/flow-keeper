@@ -1,7 +1,8 @@
 <script lang="ts">
   import { api } from "../lib/api";
   import { failure, resumeInFolder, toast, ui } from "../lib/ui.svelte";
-  import type { ProjectOption } from "../lib/types";
+  import { modelName, tokens } from "../lib/format";
+  import type { ProjectOption, Usage } from "../lib/types";
 
   let text = $state("");
   let desc = $state("");
@@ -11,6 +12,8 @@
   let options = $state<ProjectOption[]>([]);
   let showCommand = $state(false);
   let dialogEl = $state<HTMLDivElement | null>(null);
+  let usage = $state<Usage | null | "loading" | "error">("loading");
+  let usageError = $state("");
 
   $effect(() => {
     const d = ui.dialog;
@@ -26,6 +29,17 @@
       newName = "";
       associate = d.kind === "move" && d.card.projectId === null;
       api.projects().then((p) => (options = p), failure);
+    }
+    if (d.kind === "analytics") {
+      usage = "loading";
+      api.usage(d.card.id).then(
+        (u) => ui.dialog === d && (usage = u),
+        (e) => {
+          if (ui.dialog !== d) return;
+          usageError = typeof e === "string" ? e : "Usage not available.";
+          usage = "error";
+        },
+      );
     }
     queueMicrotask(() => dialogEl?.querySelector<HTMLElement>("input, select, button.btn")?.focus());
   });
@@ -121,6 +135,46 @@
         {/each}
       </select>
       <div class="row"><button class="btn secondary" onclick={close}>Cancel</button><button class="btn" disabled={!target} onclick={save}>Merge</button></div>
+    {:else if d.kind === "analytics"}
+      <h2 id="dlg-title">Analytics</h2>
+      <p class="hint">{d.card.title}</p>
+      <h3>Tokens</h3>
+      {#if usage === "loading"}
+        <p class="hint">Reading the transcript…</p>
+      {:else if usage === "error"}
+        <p class="hint">{usageError}</p>
+      {:else if usage === null}
+        <p class="hint">No transcript yet: tokens appear after the first reply.</p>
+      {:else}
+        {@const t = usage.tokens}
+        {@const rows = [
+          { label: "Input", value: t.input, note: "not cached" },
+          { label: "Cache write", value: t.cacheWrite, note: null },
+          { label: "Cache read", value: t.cacheRead, note: null },
+          { label: "Output", value: t.output, note: t.reasoning ? `${tokens(t.reasoning)} reasoning` : null },
+        ]}
+        {@const total = t.input + t.cacheWrite + t.cacheRead + t.output}
+        <dl class="stats">
+          <div class="total"><dt>Total</dt><dd title={total.toLocaleString("en-US")}>{tokens(total)}</dd></div>
+          {#each rows as r}
+            <div>
+              <dt>{r.label}{#if r.note}<small>{r.note}</small>{/if}</dt>
+              <dd title={r.value.toLocaleString("en-US")}>{tokens(r.value)}</dd>
+            </div>
+          {/each}
+          {#if usage.subagents}
+            {@const s = usage.subagents}
+            {@const sub = s.input + s.cacheWrite + s.cacheRead + s.output}
+            <div class="sub"><dt>Of which subagents</dt><dd title={sub.toLocaleString("en-US")}>{tokens(sub)}</dd></div>
+          {/if}
+        </dl>
+        {@const responses = `${usage.requests.toLocaleString("en-US")} model ${usage.requests === 1 ? "response" : "responses"}`}
+        <p class="note">{[responses, ...usage.models.map(modelName)].join(" · ")}</p>
+        {#if usage.fromHistory}
+          <p class="note">The agent has deleted the transcript: these are the figures Flow Keeper saved.</p>
+        {/if}
+      {/if}
+      <div class="row"><button class="btn" onclick={close}>Close</button></div>
     {:else if d.kind === "unreachable"}
       <h2 id="dlg-title">{d.title}</h2>
       <p class="hint">{d.message}</p>
@@ -169,6 +223,52 @@
   h2 {
     margin: 0;
     font-size: 17px;
+  }
+  h3 {
+    margin: 6px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+  }
+  .stats {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .stats div {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 6px 0;
+    border-top: 1px solid var(--line);
+    font-size: 13.5px;
+  }
+  .stats div:first-child {
+    border-top: 0;
+  }
+  .stats dt small {
+    margin-left: 6px;
+    color: var(--text-3);
+    font-size: 12px;
+  }
+  .stats dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .stats .total {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .stats .sub {
+    color: var(--text-2);
+  }
+  .note {
+    margin: 0;
+    color: var(--text-3);
+    font-size: 12px;
   }
   .hint {
     margin: 0;

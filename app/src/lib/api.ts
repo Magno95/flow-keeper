@@ -2,6 +2,8 @@ import { invoke as tauriInvoke, isTauri } from "@tauri-apps/api/core";
 import { listen as tauriListen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AccessResult,
+  Activity,
+  ActivityStatus,
   Check,
   CompanionState,
   ConversationCard,
@@ -12,7 +14,9 @@ import type {
   Settings,
   SettingsView,
   SetupState,
+  TokenStats,
   UpdateState,
+  Usage,
 } from "./types";
 
 // Outside Tauri (browser preview) we use mock data.
@@ -41,6 +45,7 @@ export const api = {
   resume: (id: number) => invoke<AccessResult>("resume_conversation", { id }),
   chooseFolderAndResume: (id: number) => invoke<AccessResult | null>("choose_folder_and_resume", { id }),
   hide: (id: number) => invoke<void>("hide_conversation", { id }),
+  hideProject: (id: number | null) => invoke<number[]>("hide_project", { id }),
   unhide: (id: number) => invoke<void>("unhide_conversation", { id }),
   dismissAttention: (id: number) => invoke<void>("dismiss_attention", { id }),
   markProjectRead: (id: number | null) => invoke<void>("mark_project_read", { id }),
@@ -48,6 +53,9 @@ export const api = {
   move: (req: { id: number; projectId: number | null; newProjectName: string | null; associateFolder: boolean }) =>
     invoke<number | null>("move_conversation", { req }),
   requestRecap: (id: number) => invoke<void>("request_recap", { id }),
+  usage: (id: number) => invoke<Usage | null>("get_usage", { id }),
+  tokenStats: (since: number | null, previousSince: number | null, previousUntil: number | null = null) =>
+    invoke<TokenStats>("get_token_stats", { since, previousSince, previousUntil }),
   updateProject: (id: number, name: string | null, description: string | null, setDescription: boolean) =>
     invoke<void>("update_project", { id, name, description, setDescription }),
   setProjectExcluded: (id: number, excluded: boolean) => invoke<void>("set_project_excluded", { id, excluded }),
@@ -75,6 +83,9 @@ export const api = {
   installUpdate: () => invoke<void>("install_update"),
   openUpdates: () => invoke<void>("open_updates"),
   setCompanionHeadroom: (extra: number) => invoke<void>("set_companion_headroom", { extra }),
+  activity: (since: number) => invoke<Activity>("get_activity", { since }),
+  activityStatus: () => invoke<ActivityStatus>("get_activity_status"),
+  syncActivity: () => invoke<ActivityStatus>("sync_activity"),
 };
 
 export function onChanged(cb: (tick: boolean) => void): Promise<UnlistenFn> {

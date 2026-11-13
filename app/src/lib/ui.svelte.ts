@@ -8,6 +8,7 @@ export type Toast = { id: number; message: string; action?: { label: string; run
 export type Dialog =
   | { kind: "rename"; card: ConversationCard }
   | { kind: "move"; card: ConversationCard }
+  | { kind: "analytics"; card: ConversationCard }
   | { kind: "unreachable"; title: string; message: string; command: string | null }
   | { kind: "needsFolder"; card: ConversationCard; message: string }
   | { kind: "project"; id: number; name: string; description: string | null }
@@ -89,6 +90,20 @@ export async function removeFromView(card: ConversationCard) {
     toast("Removed from view. If the conversation picks up again, it will reappear here.", {
       label: "Undo",
       run: () => api.unhide(card.id),
+    });
+  } catch (e) {
+    failure(e);
+  }
+}
+
+/** Removes every conversation of the project; each one comes back if it picks up again. */
+export async function removeProjectFromView(id: number | null, done: () => void) {
+  try {
+    const ids = await api.hideProject(id);
+    done();
+    toast("Project removed from view. If one of its conversations picks up again, it will reappear here.", {
+      label: "Undo",
+      run: () => Promise.all(ids.map(api.unhide)).then(done, failure),
     });
   } catch (e) {
     failure(e);

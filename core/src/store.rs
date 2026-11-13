@@ -6,7 +6,7 @@ use anyhow::Result;
 pub use rusqlite::Connection;
 use rusqlite::{params, OptionalExtension};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS conversations(
   -- Finished turn not looked at yet: cleared on opening it or its project,
   -- and on every state change.
   unread INTEGER NOT NULL DEFAULT 0,
+  usage_synced_at INTEGER NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL DEFAULT 0,
   current_instance_id INTEGER,
   UNIQUE(tool, namespace, native_id)
 );
@@ -114,6 +116,16 @@ CREATE TABLE IF NOT EXISTS recaps(
   created_at INTEGER NOT NULL
 );
 
+-- Every provider call, reserved before it is made: the budget counts calls,
+-- not only the summaries that were saved.
+CREATE TABLE IF NOT EXISTS recap_calls(
+  id INTEGER PRIMARY KEY,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS recap_calls_created ON recap_calls(created_at);
+
 CREATE TABLE IF NOT EXISTS cursors(
   conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
   path TEXT NOT NULL,
@@ -132,6 +144,36 @@ CREATE TABLE IF NOT EXISTS notifications(
 );
 
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+-- Use of the app per hour (UTC start, ms): only counters (`activity.rs`).
+-- `version` grows on every change, `synced_version` is the last one the
+-- remote server accepted.
+CREATE TABLE IF NOT EXISTS activity(
+  hour_start INTEGER PRIMARY KEY,
+  panel_opens INTEGER NOT NULL DEFAULT 0,
+  conversation_opens INTEGER NOT NULL DEFAULT 0,
+  version INTEGER NOT NULL DEFAULT 0,
+  synced_version INTEGER NOT NULL DEFAULT 0
+);
+
+-- Tokens per conversation, model and hour (UTC start, ms), copied from the
+-- transcripts before the agents delete them (`usage.rs`). No foreign key: the
+-- usage outlives the conversation.
+CREATE TABLE IF NOT EXISTS token_usage(
+  conversation_id INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  hour_start INTEGER NOT NULL,
+  subagent INTEGER NOT NULL,
+  input INTEGER NOT NULL DEFAULT 0,
+  cache_write INTEGER NOT NULL DEFAULT 0,
+  cache_write_1h INTEGER NOT NULL DEFAULT 0,
+  cache_read INTEGER NOT NULL DEFAULT 0,
+  output INTEGER NOT NULL DEFAULT 0,
+  reasoning INTEGER NOT NULL DEFAULT 0,
+  requests INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(conversation_id, model, hour_start, subagent)
+);
+CREATE INDEX IF NOT EXISTS token_usage_hour ON token_usage(hour_start);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS conversation_search
   USING fts5(title, summary, tokenize = 'unicode61 remove_diacritics 2');
@@ -173,7 +215,9 @@ fn configure(conn: &Connection) -> Result<()> {
 /// Columns added after the first version: `CREATE TABLE IF NOT EXISTS` does
 /// not add them to existing databases.
 fn migrate(conn: &Connection) -> Result<()> {
-    for column in ["attention_seen", "unread"] {
+    // `usage_synced_at`: last read of the transcript's usage; `started_at`: first
+    // record of the transcript, 0 while unknown.
+    for column in ["attention_seen", "unread", "usage_synced_at", "started_at"] {
         let present: bool = conn.query_row(
             "SELECT count(*) > 0 FROM pragma_table_info('conversations') WHERE name = ?1",
             [column],
@@ -183,6 +227,35 @@ fn migrate(conn: &Connection) -> Result<()> {
             conn.execute_batch(&format!("ALTER TABLE conversations ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"))?;
         }
     }
+    // `cache_write_1h` (the part of `cache_write` priced as the 1-hour cache):
+    // the transcripts still there are read again to fill it, in the same
+    // transaction so an interruption cannot skip the reading.
+    let has_1h: bool = conn.query_row(
+        "SELECT count(*) > 0 FROM pragma_table_info('token_usage') WHERE name = 'cache_write_1h'",
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_1h {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(
+            "ALTER TABLE token_usage ADD COLUMN cache_write_1h INTEGER NOT NULL DEFAULT 0;
+             UPDATE conversations SET usage_synced_at = 0;",
+        )?;
+        tx.commit()?;
+    }
+    // The call ledger starts from the summaries already saved, so the budget
+    // window does not reset when updating. Marker check, copy and marker are one
+    // transaction: an interruption in between cannot copy the history twice.
+    let tx = conn.unchecked_transaction()?;
+    if meta(&tx, "recap_calls_seeded")?.is_none() {
+        tx.execute(
+            "INSERT INTO recap_calls(conversation_id, cost_usd, created_at)
+             SELECT conversation_id, cost_usd, created_at FROM recaps",
+            [],
+        )?;
+        set_meta(&tx, "recap_calls_seeded", "1")?;
+    }
+    tx.commit()?;
     Ok(())
 }
 
@@ -216,6 +289,11 @@ pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn delete_meta(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
+    Ok(())
+}
+
 /// Updates the search index for a conversation.
 pub fn index_conversation(conn: &Connection, id: i64) -> Result<()> {
     conn.execute("DELETE FROM conversation_search WHERE rowid = ?1", [id])?;
@@ -245,6 +323,31 @@ mod tests {
     }
 
     #[test]
+    fn call_ledger_starts_from_the_summaries_saved_before_it_existed() {
+        let conn = open_in_memory().unwrap();
+        conn.execute(
+            "INSERT INTO conversations(id, tool, namespace, native_id, state, state_at, last_activity_at, first_seen_at)
+             VALUES (1, 'claude', 'd', 's', 'idle', 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO recaps(conversation_id, source_revision, relevant, cursor_from, cursor_to, provider, model,
+               prompt_version, cost_usd, created_at) VALUES (1, 1, 1, 0, 1, 'p', 'm', 2, 0.5, 1000)",
+            [],
+        )
+        .unwrap();
+        // A database from before the ledger: no table content and no seed marker.
+        conn.execute("DELETE FROM recap_calls", []).unwrap();
+        conn.execute("DELETE FROM meta WHERE key = 'recap_calls_seeded'", []).unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let (n, cost): (i64, f64) =
+            conn.query_row("SELECT count(*), SUM(cost_usd) FROM recap_calls", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((n, cost), (1, 0.5), "seeded once");
+    }
+
+    #[test]
     fn existing_database_gains_new_columns() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -259,5 +362,61 @@ mod tests {
         assert!(!unread);
         let version: String = conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
         assert_eq!(version, SCHEMA_VERSION.to_string());
+    }
+
+    #[test]
+    fn saved_usage_gains_the_hour_cache_and_is_read_again_once() {
+        let conn = open_in_memory().unwrap();
+        // A database from before `cache_write_1h`.
+        conn.execute_batch(
+            "INSERT INTO conversations(id, tool, namespace, native_id, state, state_at, last_activity_at, first_seen_at,
+               usage_synced_at) VALUES (1, 'claude', 'd', 's', 'idle', 0, 0, 0, 500);
+             ALTER TABLE token_usage DROP COLUMN cache_write_1h;",
+        )
+        .unwrap();
+        let synced = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT usage_synced_at FROM conversations WHERE id = 1", [], |r| r.get(0)).unwrap()
+        };
+        migrate(&conn).unwrap();
+        assert_eq!(synced(&conn), 0);
+        conn.execute("UPDATE conversations SET usage_synced_at = 500", []).unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(synced(&conn), 500, "read again only once");
+    }
+
+    #[test]
+    fn an_interrupted_ledger_migration_does_not_copy_the_history_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.sqlite");
+        let conn = open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO conversations(id, tool, namespace, native_id, state, state_at, last_activity_at, first_seen_at)
+             VALUES (1, 'claude', 'd', 's', 'idle', 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO recaps(conversation_id, source_revision, relevant, cursor_from, cursor_to, provider, model,
+               prompt_version, cost_usd, created_at) VALUES (1, 1, 1, 0, 1, 'p', 'm', 2, 0.42, 100)",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM recap_calls", []).unwrap();
+        conn.execute("DELETE FROM meta WHERE key = 'recap_calls_seeded'", []).unwrap();
+        // Fault injected on the marker write, after the copy.
+        conn.execute_batch(
+            "CREATE TRIGGER fail_seed BEFORE INSERT ON meta WHEN NEW.key = 'recap_calls_seeded'
+             BEGIN SELECT RAISE(ABORT, 'synthetic fault'); END;",
+        )
+        .unwrap();
+        assert!(migrate(&conn).is_err());
+        let copied: i64 = conn.query_row("SELECT count(*) FROM recap_calls", [], |r| r.get(0)).unwrap();
+        assert_eq!(copied, 0, "the copy was rolled back with the marker");
+        conn.execute_batch("DROP TRIGGER fail_seed").unwrap();
+        drop(conn);
+        let conn = open(&path).unwrap();
+        let (n, cost): (i64, f64) =
+            conn.query_row("SELECT count(*), SUM(cost_usd) FROM recap_calls", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((n, cost), (1, 0.42));
     }
 }

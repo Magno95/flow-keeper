@@ -124,6 +124,8 @@ pub struct ConversationCard {
     pub environment: String,
     pub environment_is_guess: bool,
     pub folder_label: Option<String>,
+    /// First record of the transcript, or when the app first saw the conversation.
+    pub started_at: i64,
     pub last_activity_at: i64,
     pub hidden: bool,
     /// Waiting for you, but the user has already seen the request: left out of “Waiting for you” and the badge.
@@ -186,7 +188,8 @@ SELECT c.id, c.project_id, c.user_title, c.title, c.provisional_title, c.summary
        CASE WHEN c.recap_status = 'pending' AND c.recap_due_at IS NULL THEN 'waiting' ELSE c.recap_status END,
        c.summary_at,
        c.state, c.state_detail, c.last_activity_at, c.hidden, c.worktree_root, c.cwd, c.tool,
-       i.env_app, i.env_guess, i.ended_at, i.pid, i.tty, i.bundle_id, c.attention_seen, c.unread
+       i.env_app, i.env_guess, i.ended_at, i.pid, i.tty, i.bundle_id, c.attention_seen, c.unread,
+       CASE WHEN c.started_at > 0 THEN MIN(c.started_at, c.first_seen_at) ELSE c.first_seen_at END
 FROM conversations c
 LEFT JOIN instances i ON i.id = c.current_instance_id
 ";
@@ -214,6 +217,7 @@ fn read_card(r: &Row, now: i64) -> rusqlite::Result<RawCard> {
     let bundle_id: Option<String> = r.get(20)?;
     let attention_seen: bool = r.get(21)?;
     let unread: bool = r.get(22)?;
+    let started_at: i64 = r.get(23)?;
 
     let display = display_state(&op_state, last_activity_at, now);
     let (title, title_is_provisional) = match (user_title, title, provisional) {
@@ -246,6 +250,7 @@ fn read_card(r: &Row, now: i64) -> rusqlite::Result<RawCard> {
             },
             environment_is_guess: env_guess.unwrap_or(true),
             folder_label: None,
+            started_at,
             last_activity_at,
             hidden: r.get(11)?,
             attention_seen: attention_seen && display == DisplayState::Waiting,

@@ -3,6 +3,7 @@
   import { api, onChanged, onNavigate, onPanelClosed, onPanelOpened } from "../lib/api";
   import type { SetupState } from "../lib/types";
   import Dialogs from "./Dialogs.svelte";
+  import ActivityView from "./ActivityView.svelte";
   import DoctorView from "./DoctorView.svelte";
   import Onboarding from "./Onboarding.svelte";
   import Overview from "./Overview.svelte";
@@ -19,7 +20,10 @@
   let closed = $state(0);
   let setup = $state<SetupState | null>(null);
 
-  const go = (r: Route) => (route = r);
+  const go = (r: Route) => {
+    route = r;
+    if (r.name === "overview") loadSetup();
+  };
 
   async function loadSetup() {
     setup = await api.setupState().catch(() => null);
@@ -72,6 +76,8 @@
     <RemovedView {refresh} {go} />
   {:else if route.name === "settings"}
     <SettingsView {go} />
+  {:else if route.name === "activity"}
+    <ActivityView {refresh} {go} />
   {:else if route.name === "doctor"}
     <DoctorView {go} />
   {:else if route.name === "onboarding"}

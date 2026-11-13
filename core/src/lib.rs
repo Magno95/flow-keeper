@@ -2,6 +2,7 @@
 //! It does not depend on the desktop shell, so the rules can be tested in isolation.
 
 pub mod access;
+pub mod activity;
 pub mod codex;
 pub mod connect;
 pub mod doctor;
@@ -11,6 +12,7 @@ pub mod event;
 pub mod legacy;
 pub mod logging;
 pub mod paths;
+pub mod pricing;
 pub mod projects;
 pub mod recap;
 pub mod settings;
@@ -19,6 +21,7 @@ pub mod store;
 pub mod system;
 pub mod transcript;
 pub mod updates;
+pub mod usage;
 pub mod views;
 
 pub fn now_ms() -> i64 {

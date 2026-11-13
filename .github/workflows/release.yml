@@ -40,6 +40,10 @@ jobs:
 
       - name: Universal build
         working-directory: app
+        # Default activity server of the build, from the repository's settings (empty: none).
+        env:
+          FLOK_ACTIVITY_ENDPOINT: ${{ vars.FLOK_ACTIVITY_ENDPOINT }}
+          FLOK_ACTIVITY_TOKEN: ${{ secrets.FLOK_ACTIVITY_TOKEN }}
         run: |
           npm ci
           npx tauri build --target universal-apple-darwin --bundles app

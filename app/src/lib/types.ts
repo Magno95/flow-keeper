@@ -17,6 +17,8 @@ export interface ConversationCard {
   environment: string;
   environmentIsGuess: boolean;
   folderLabel: string | null;
+  /** First record of the transcript, or when the app first saw the conversation. */
+  startedAt: number;
   lastActivityAt: number;
   hidden: boolean;
   attentionSeen: boolean;
@@ -91,6 +93,12 @@ export interface Settings {
   companionVisible: boolean;
   launchAtLogin: boolean;
   onboardingDone: boolean;
+  /** Sends the use counters to `activityEndpoint`. */
+  activitySync: boolean;
+  activityEndpoint: string;
+  activityToken: string;
+  /** Changed by the user: the build's default server no longer applies. */
+  activityCustom: boolean;
 }
 
 export interface SettingsView {
@@ -114,6 +122,8 @@ export interface SetupState {
   codexPluginManaged: boolean;
   codexHooksPending: boolean;
   conversationsSeen: number;
+  claudeConversationsSeen: number;
+  codexConversationsSeen: number;
   onboardingDone: boolean;
 }
 
@@ -139,6 +149,75 @@ export interface UpdateState {
   error: string | null;
   /** Why the app can't update itself. */
   blocker: string | null;
+  /** The releases after the installed one, newest first. */
+  whatsNew: ReleaseNotes[];
+}
+
+/** A release's main changes, from its notes. */
+export interface ReleaseNotes {
+  version: string;
+  highlights: string[];
+}
+
+/** Tokens as the agent reports them; `input` excludes cached tokens. */
+export interface Tokens {
+  input: number;
+  cacheWrite: number;
+  /** Part of `cacheWrite` kept for an hour, which costs more. */
+  cacheWrite1h: number;
+  cacheRead: number;
+  output: number;
+  /** Part of `output` spent on reasoning. */
+  reasoning: number;
+}
+
+export interface Usage {
+  /** Whole conversation, subagents included. */
+  tokens: Tokens;
+  /** Share spent by subagents (Claude Code only). */
+  subagents: Tokens | null;
+  requests: number;
+  models: string[];
+  /** The agent deleted the transcript: the figures are the ones Flow Keeper saved. */
+  fromHistory: boolean;
+}
+
+export interface HourTokens {
+  hourStart: number;
+  tokens: Tokens;
+  /** Estimated, in USD: Claude models only. */
+  cost: number;
+}
+
+/** A project's or a model's part of the usage. */
+export interface TokenShare {
+  /** Project id; null for Unassigned and for models. */
+  id: number | null;
+  name: string;
+  tokens: Tokens;
+  cost: number;
+  requests: number;
+  conversations: number;
+}
+
+/** Tokens of all conversations, as saved by Flow Keeper. */
+export interface TokenStats {
+  /** First hour saved. */
+  firstHour: number | null;
+  tokens: Tokens;
+  /** Estimated, in USD, at the Claude API list prices: Claude models only. */
+  cost: number;
+  requests: number;
+  conversations: number;
+  /** The period before, of the same length. */
+  previous: Tokens | null;
+  previousCost: number | null;
+  hours: HourTokens[];
+  /** Most used first. */
+  projects: TokenShare[];
+  models: TokenShare[];
+  /** Claude models used in the period that have no price: not in `cost`. */
+  unpriced: string[];
 }
 
 export interface Check {
@@ -147,4 +226,25 @@ export interface Check {
   level: "ok" | "warn" | "error";
   detail: string;
   advanced: string | null;
+}
+
+/** Use of the app in one hour (start in UTC ms). */
+export interface ActivityHour {
+  hourStart: number;
+  panelOpens: number;
+  conversationOpens: number;
+}
+
+export interface Activity {
+  hours: ActivityHour[];
+  /** First hour counted on this Mac. */
+  since: number | null;
+}
+
+/** Sending the counters to the server set in the settings. */
+export interface ActivityStatus {
+  pendingHours: number;
+  lastSyncAt: number | null;
+  lastAttemptAt: number | null;
+  lastError: string | null;
 }

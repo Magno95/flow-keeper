@@ -8,8 +8,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
@@ -18,11 +18,15 @@ use sha2::{Digest, Sha256};
 
 use crate::engine::truncate_chars;
 use crate::legacy;
+use crate::system;
 
 pub const DEFAULT_REPO: &str = "Magno95/flow-keeper";
 pub const APP_BUNDLE: &str = "Flow Keeper.app";
 pub const INSTALL_SH: &str = include_str!("../../scripts/install.sh");
 const ARCHIVE_SUFFIX: &str = ".app.tar.gz";
+/// Lines of a release's recap when its notes have no summary.
+const MAX_HIGHLIGHTS: usize = 3;
+const HIGHLIGHT_CHARS: usize = 140;
 
 /// Releases repository; `FLOW_KEEPER_REPO` as in the install script.
 pub fn repo() -> String {
@@ -39,6 +43,8 @@ pub struct Release {
     pub published_at: Option<String>,
     /// Name of the bundle archive among the assets.
     pub archive: String,
+    /// The release's main changes, from its notes.
+    pub highlights: Vec<String>,
 }
 
 /// Installable release from the `releases/latest` response: no drafts,
@@ -65,7 +71,44 @@ pub fn parse_release(v: &Value) -> Option<Release> {
         published_at: v.get("published_at").and_then(Value::as_str).map(String::from),
         archive,
         tag,
+        highlights: highlights(v.get("body").and_then(Value::as_str).unwrap_or_default()),
     })
+}
+
+/// Recap of release notes written as a `CHANGELOG.md` section: the summary
+/// before the first `###` heading or, without one, the first sentence of the
+/// first few entries. Release tooling (`### Development`) is left out.
+pub fn highlights(notes: &str) -> Vec<String> {
+    let notes = notes.replace("\r\n", "\n");
+    let summary = notes
+        .lines()
+        .take_while(|l| !l.starts_with("### ") && !l.starts_with("- "))
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !summary.is_empty() {
+        return vec![summary];
+    }
+    let mut entries: Vec<String> = Vec::new();
+    let mut development = false;
+    for line in notes.lines() {
+        if let Some(heading) = line.strip_prefix("### ") {
+            development = heading.trim().eq_ignore_ascii_case("development");
+        } else if development {
+            continue;
+        } else if let Some(entry) = line.strip_prefix("- ") {
+            entries.push(entry.trim().to_string());
+        } else if let (Some(last), true) = (entries.last_mut(), line.starts_with(' ')) {
+            last.push(' ');
+            last.push_str(line.trim());
+        }
+    }
+    entries.iter().take(MAX_HIGHLIGHTS).map(|e| truncate_chars(first_sentence(e), HIGHLIGHT_CHARS)).collect()
+}
+
+fn first_sentence(s: &str) -> &str {
+    s.find(". ").map_or(s, |i| &s[..=i])
 }
 
 /// "1.2.3" (with or without `v`) as numbers; the pre-release suffix is ignored.
@@ -92,36 +135,20 @@ struct Gh<'a> {
 
 impl Gh<'_> {
     fn run(&self, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
-        let child = Command::new(self.bin)
-            .args(args)
+        let mut cmd = Command::new(self.bin);
+        cmd.args(args)
             .env("PATH", self.path_env)
             .env("GH_PROMPT_DISABLED", "1")
-            .env("GH_NO_UPDATE_NOTIFIER", "1")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("could not start GitHub CLI")?;
-        let out = wait(child, timeout)?;
+            .env("GH_NO_UPDATE_NOTIFIER", "1");
+        let out = system::run_command(&mut cmd, None, timeout).map_err(|e| match e {
+            system::ExecError::Start(_) => anyhow!("could not start GitHub CLI"),
+            system::ExecError::Timeout(d) => anyhow!("GitHub is not responding (timed out after {}s)", d.as_secs()),
+            other => anyhow!("{other}"),
+        })?;
         if out.status.success() {
             return Ok(out.stdout);
         }
         Err(anyhow!(gh_error(&String::from_utf8_lossy(&out.stderr))))
-    }
-}
-
-fn wait(mut child: std::process::Child, timeout: Duration) -> Result<Output> {
-    let start = Instant::now();
-    loop {
-        if child.try_wait()?.is_some() {
-            return Ok(child.wait_with_output()?);
-        }
-        if start.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            bail!("GitHub is not responding (timed out after {}s)", timeout.as_secs());
-        }
-        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -142,19 +169,21 @@ fn gh_error(stderr: &str) -> String {
     }
 }
 
-/// Latest published release; `None` if there is no installable one.
-pub fn latest(gh: &Path, path_env: &str, repo: &str) -> Result<Option<Release>> {
+/// The recent installable releases, newest version first.
+pub fn releases(gh: &Path, path_env: &str, repo: &str) -> Result<Vec<Release>> {
     let out = Gh { bin: gh, path_env }.run(
         &[
             "api",
-            &format!("repos/{repo}/releases/latest"),
+            &format!("repos/{repo}/releases?per_page=30"),
             "--jq",
-            "{tag_name, html_url, published_at, draft, prerelease, assets: [.assets[].name]}",
+            "[.[] | {tag_name, html_url, published_at, draft, prerelease, body, assets: [.assets[].name]}]",
         ],
         Duration::from_secs(30),
     )?;
     let v: Value = serde_json::from_slice(&out).context("invalid response from GitHub")?;
-    Ok(parse_release(&v))
+    let mut list: Vec<Release> = v.as_array().context("invalid response from GitHub")?.iter().filter_map(parse_release).collect();
+    list.sort_by_key(|r| std::cmp::Reverse(parse_version(&r.version)));
+    Ok(list)
 }
 
 /// Downloads and verifies the release bundle into `dir` (emptied first).
@@ -276,6 +305,20 @@ mod tests {
     }
 
     #[test]
+    fn recaps_the_release_notes() {
+        let with_summary = "Project cards can be dragged away.\n\n### Added\n\n- Drag a card. More text.\n";
+        assert_eq!(highlights(with_summary), vec!["Project cards can be dragged away."]);
+
+        let without = "### Added\n\n- Analytics has a Today period: the tokens\n  so far. Compared with yesterday.\n\n\
+                       ### Development\n\n- `FLOK_X` sets the server.\n\n### Fixed\n\n- The companion reacts.\n";
+        assert_eq!(highlights(without), vec!["Analytics has a Today period: the tokens so far.", "The companion reacts."]);
+
+        let many = "### Fixed\n\n- One.\n- Two.\n- Three.\n- Four.\n";
+        assert_eq!(highlights(many).len(), MAX_HIGHLIGHTS);
+        assert!(highlights("").is_empty());
+    }
+
+    #[test]
     fn ignores_drafts_prereleases_and_releases_without_bundle() {
         let base = json!({ "tag_name": "v0.2.0", "assets": [{ "name": "Flow-Keeper_0.2.0_universal.app.tar.gz" }] });
         assert!(parse_release(&base).is_some(), "assets as objects too");
@@ -296,8 +339,10 @@ mod tests {
     fn reads_the_latest_release_from_github() {
         let path_env = crate::system::search_path(crate::system::login_shell_path().as_deref());
         let gh = crate::system::which("gh", &path_env).expect("gh in PATH");
-        let r = latest(&gh, &path_env, &repo()).expect("response").expect("release");
+        let all = releases(&gh, &path_env, &repo()).expect("response");
+        let r = all.first().expect("release");
         assert!(parse_version(&r.version).is_some(), "{r:?}");
+        assert!(!r.highlights.is_empty(), "{r:?}");
     }
 
     /// Actually downloads the latest release and checks its checksum and version.
@@ -306,7 +351,7 @@ mod tests {
     fn downloads_and_verifies_the_latest_release() {
         let path_env = crate::system::search_path(crate::system::login_shell_path().as_deref());
         let gh = crate::system::which("gh", &path_env).expect("gh in PATH");
-        let r = latest(&gh, &path_env, &repo()).expect("response").expect("release");
+        let r = releases(&gh, &path_env, &repo()).expect("response").remove(0);
         let dir = tempfile::tempdir().unwrap();
         let bundle = download(&gh, &path_env, &repo(), &r, &dir.path().join("x")).expect("download");
         assert_eq!(bundle_version(&bundle).as_deref(), Some(r.version.as_str()));

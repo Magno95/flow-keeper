@@ -216,4 +216,4 @@ chmod 600 "$MANIFEST"
 if [ "$open_app" = 1 ]; then
   open "$target"
 fi
-say "Done. FloK appears on your desktop: with “Connect your agents” the app connects to Claude Code and Codex on its own."
+say "Done. FloK appears on your desktop: open “Connect your agents” to connect the agents you use. Codex requires /hooks approval; the optional editor extension requires Reload Window."

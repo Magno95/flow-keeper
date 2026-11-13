@@ -33,7 +33,9 @@ pub struct SpoolRecord {
     pub source_ns: i128,
     pub header: HashMap<String, String>,
     pub payload: Payload,
-    /// Content fingerprint, used as the deduplication key.
+    /// Identity of this emission, used as the deduplication key: the hook's
+    /// unique file name plus the content. Re-reading the same file after a crash
+    /// yields the same digest; a later event with identical content does not.
     pub digest: String,
 }
 
@@ -121,7 +123,13 @@ pub fn parse_bytes(file: &Path, bytes: &[u8], source_ns: i128) -> Result<SpoolRe
         .filter_map(|line| line.split_once('='))
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let digest = hex(&Sha256::digest(bytes));
+    let mut hasher = Sha256::new();
+    if let Some(name) = file.file_name() {
+        hasher.update(name.as_encoded_bytes());
+    }
+    hasher.update([0]);
+    hasher.update(bytes);
+    let digest = hex(&hasher.finalize());
     Ok(SpoolRecord {
         file: file.to_path_buf(),
         source_ns,
@@ -195,6 +203,16 @@ mod tests {
         assert_eq!(p.str("transcript_path").as_deref(), Some("/a \"b\".jsonl"));
         assert_eq!(p.str("prompt"), None);
         assert_eq!(p.str_prefix("prompt", 9).as_deref(), Some("hello how"));
+    }
+
+    #[test]
+    fn same_content_in_distinct_files_is_a_distinct_event() {
+        let raw = b"flow-keeper-spool 1\nEVENT=UserPromptSubmit\n\n{\"session_id\":\"s1\",\"prompt\":\"continue\"}";
+        let a = parse_bytes(Path::new("1-10-claude-UserPromptSubmit.evt"), raw, 1).unwrap();
+        let b = parse_bytes(Path::new("5-11-claude-UserPromptSubmit.evt"), raw, 5).unwrap();
+        let again = parse_bytes(Path::new("1-10-claude-UserPromptSubmit.evt"), raw, 1).unwrap();
+        assert_ne!(a.digest, b.digest);
+        assert_eq!(a.digest, again.digest, "re-reading the same file stays idempotent");
     }
 
     #[test]

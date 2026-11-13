@@ -12,7 +12,7 @@ use tracker_core::engine::{NotifyKind, NotifyRequest};
 use tracker_core::recap::{self, ApiProvider, ClaudeCliProvider, RecapProvider, RunResult};
 use tracker_core::settings::RecapProviderKind;
 use tracker_core::views::{self, CompanionState};
-use tracker_core::{doctor, now_ms, store, system};
+use tracker_core::{doctor, now_ms, store, system, usage};
 
 use crate::AppState;
 
@@ -25,6 +25,11 @@ const SWEEP_EVERY: Duration = Duration::from_secs(15);
 /// Refresh the UI periodically anyway: Idle and Unverifiable depend on time.
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
 const ENV_EVERY: Duration = Duration::from_secs(600);
+/// Token usage copied from the transcripts: often enough to always have it
+/// before the agents delete them, a few transcripts at a time.
+const USAGE_EVERY: Duration = Duration::from_secs(60);
+const USAGE_BATCH: usize = 20;
+const PRUNE_EVERY: Duration = Duration::from_secs(6 * 3600);
 /// Window for grouping notifications that arrive close together.
 const NOTIFY_WINDOW: Duration = Duration::from_secs(3);
 
@@ -33,6 +38,8 @@ pub fn start(app: AppHandle) {
     thread::Builder::new().name("collector".into()).spawn(move || collector(a)).expect("thread collector");
     let a = app.clone();
     thread::Builder::new().name("recap".into()).spawn(move || recap_worker(a)).expect("thread recap");
+    let a = app.clone();
+    thread::Builder::new().name("usage".into()).spawn(move || usage_worker(a)).expect("thread usage");
     thread::Builder::new().name("environment".into()).spawn(move || environment_worker(app)).expect("thread env");
 }
 
@@ -63,6 +70,7 @@ fn collector(app: AppHandle) {
     let state = app.state::<AppState>();
     let mut last_sweep = Instant::now() - SWEEP_EVERY;
     let mut last_refresh = Instant::now();
+    let mut last_prune: Option<Instant> = None;
     let mut pending: Vec<NotifyRequest> = Vec::new();
     let mut pending_since: Option<Instant> = None;
     loop {
@@ -96,6 +104,12 @@ fn collector(app: AppHandle) {
                             changed |= !closed.is_empty();
                         }
                     }
+                }
+            }
+            if last_prune.is_none_or(|t| t.elapsed() >= PRUNE_EVERY) {
+                last_prune = Some(Instant::now());
+                if let Err(err) = tracker.prune_events(now) {
+                    log::error!("event pruning failed: {err:#}");
                 }
             }
             if let Some((x, y)) = state.companion_pos.lock().expect("pos").take() {
@@ -194,6 +208,56 @@ pub fn build_provider(state: &AppState) -> Result<Box<dyn RecapProvider>, String
     }
 }
 
+/// Authorizes each step of a recap against the current preferences. The tracker
+/// lock is held only for the check, never during the provider call. The
+/// preferences are read with the lock held (they are changed under it too), so a
+/// change already confirmed is never missed through a stale copy.
+struct StateGate<'a> {
+    state: &'a AppState,
+}
+
+impl recap::CallGate for StateGate<'_> {
+    fn check(&self, job: &recap::Job, provider: &recap::ProviderKey) -> Result<(), recap::Denied> {
+        let tracker = self.state.tracker.lock().expect("tracker");
+        let settings = self.state.settings();
+        recap::check_policy(&tracker.conn, &settings, job.conversation_id, provider, now_ms())
+    }
+
+    fn reserve(&self, job: &recap::Job, provider: &recap::ProviderKey) -> Result<i64, recap::Denied> {
+        let tracker = self.state.tracker.lock().expect("tracker");
+        let settings = self.state.settings();
+        recap::reserve_call(&tracker.conn, &settings, job, provider, now_ms())
+    }
+
+    fn begin(&self, job: &recap::Job, provider: &recap::ProviderKey, _ticket: i64) -> Result<(), recap::Denied> {
+        let tracker = self.state.tracker.lock().expect("tracker");
+        let settings = self.state.settings();
+        recap::begin_call(&tracker.conn, &settings, job, provider)
+    }
+
+    fn cancel(&self, ticket: i64) {
+        let tracker = self.state.tracker.lock().expect("tracker");
+        if let Err(err) = recap::cancel_call(&tracker.conn, ticket) {
+            log::error!("cancelling a reserved summary call: {err:#}");
+        }
+    }
+
+    fn settle(&self, ticket: i64, cost_usd: f64) {
+        // The cost has been incurred: a busy database is retried before giving up.
+        for attempt in 1..=5 {
+            let result = {
+                let tracker = self.state.tracker.lock().expect("tracker");
+                recap::settle_call(&tracker.conn, ticket, cost_usd)
+            };
+            match result {
+                Ok(()) => return,
+                Err(err) if attempt == 5 => log::error!("recording the cost of a summary (${cost_usd}): {err:#}"),
+                Err(_) => thread::sleep(Duration::from_millis(200 * attempt)),
+            }
+        }
+    }
+}
+
 fn recap_worker(app: AppHandle) {
     let state = app.state::<AppState>();
     loop {
@@ -212,8 +276,8 @@ fn recap_worker(app: AppHandle) {
             }
         };
         let (provider_id, result) = match build_provider(&state) {
-            Ok(provider) => (provider.id(), recap::run(&job, provider.as_ref())),
-            Err(err) => ("none", RunResult { chunks: vec![], error: Some(err), more: false }),
+            Ok(provider) => (provider.id(), recap::run(&job, provider.as_ref(), &StateGate { state: &state })),
+            Err(err) => ("none", RunResult { chunks: vec![], error: Some(err), halt: None, more: false }),
         };
         {
             let mut tracker = state.tracker.lock().expect("tracker");
@@ -225,11 +289,48 @@ fn recap_worker(app: AppHandle) {
     }
 }
 
+/// Copies the token usage of the active conversations in the store. The first
+/// time it goes through all of them, so even the transcripts from before this
+/// version are saved while the agents still have them. Reads are done outside
+/// the lock.
+fn usage_worker(app: AppHandle) {
+    let state = app.state::<AppState>();
+    thread::sleep(Duration::from_secs(10));
+    loop {
+        let due = {
+            let tracker = state.tracker.lock().expect("tracker");
+            usage::due(&tracker.conn, USAGE_BATCH)
+        };
+        let due = match due {
+            Ok(due) => due,
+            Err(err) => {
+                log::error!("usage queue: {err:#}");
+                Vec::new()
+            }
+        };
+        for (id, tool, path) in &due {
+            let read = usage::read(tool, path).ok();
+            let tracker = state.tracker.lock().expect("tracker");
+            if let Err(err) = usage::save(&tracker.conn, *id, read.as_ref(), now_ms()) {
+                log::error!("saving the usage of conversation {id}: {err:#}");
+            }
+        }
+        // A full batch means there are more: no pause.
+        if due.len() < USAGE_BATCH {
+            thread::sleep(USAGE_EVERY);
+        }
+    }
+}
+
 /// Periodically detects CLIs and plugins (slow, done outside the lock).
+/// When environment problem is detected, checks every 5s until resolved; otherwise every 10m.
 fn environment_worker(app: AppHandle) {
     loop {
         refresh_environment(&app);
-        thread::sleep(ENV_EVERY);
+        let state = app.state::<AppState>();
+        let has_problem = state.environment_problem();
+        let delay = if has_problem { Duration::from_secs(5) } else { ENV_EVERY };
+        thread::sleep(delay);
     }
 }
 
@@ -246,6 +347,7 @@ pub fn refresh_environment(app: &AppHandle) -> doctor::Environment {
         }
         let _ = tracker_core::connect::sync_if_connected(&claude, &state.path_env, &dir);
     }
+    let mut plugin_synced = false;
     if let Some(codex) = system::which("codex", &state.path_env) {
         let dir = state.paths.base.join("codex-plugin");
         match tracker_core::connect::codex_migrate_legacy(&codex, &state.path_env, &dir) {
@@ -253,9 +355,13 @@ pub fn refresh_environment(app: &AppHandle) -> doctor::Environment {
             Ok(false) => {}
             Err(err) => log::warn!("replacing the AI Tracker plugin in Codex: {err}"),
         }
-        let _ = tracker_core::connect::codex_sync_if_connected(&codex, &state.path_env, &dir);
+        plugin_synced = tracker_core::connect::codex_sync_if_connected(&codex, &state.path_env, &dir).is_some();
     }
     tracker_core::editors::sync_installed(&state.paths.base.join("editor-extension"));
+    // Brief delay after plugin resync to let Codex state settle before detection.
+    if plugin_synced {
+        thread::sleep(Duration::from_millis(100));
+    }
     let env = doctor::detect(&state.path_env);
     *state.environment.lock().expect("environment") = Some(env.clone());
     push_companion(app, true);

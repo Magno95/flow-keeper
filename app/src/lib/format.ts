@@ -34,6 +34,26 @@ export function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** Token count in short form: 950, 12.4K, 83.3M. */
+export function tokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 999_500) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+/** Dollars in short form: $0.42, $12.34, $1,234. */
+export function usd(n: number): string {
+  if (n > 0 && n < 0.01) return "<$0.01";
+  const digits = n < 100 ? 2 : 0;
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+/** `claude-opus-5-5` → “Opus 5.5”; other agents' models as they are. */
+export function modelName(id: string): string {
+  const m = /^claude-([a-z]+)-(\d+)-(\d{1,2})(?:-\d{8})?$/.exec(id);
+  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}` : id;
+}
+
 /** Soft, stable color for the project's initial. */
 export function projectHue(name: string): number {
   let h = 0;
